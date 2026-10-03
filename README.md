@@ -159,6 +159,37 @@ score that cannot be audited is a vibe.
 
 ---
 
+## Accuracy
+
+A scanner that reports a mature codebase as undisciplined gets uninstalled, and
+deservedly. So the rules are measured against codebases that have nothing to do
+with this project.
+
+Pointed at [zod](https://github.com/colinhacks/zod) — 65k lines, no database
+anywhere — the first version of the database rules reported **46 findings**, more
+than a third of the entire report, from four independent causes:
+
+- a bare `\bpg\b` matched any `.pg(` namespace call and unlocked every database
+  rule for the whole repository
+- the query patterns matched bare `.get(`, `.create(`, `.select()`, so a Zod
+  schema walker looked like an N+1
+- `usesDatabase` was a project-wide question with no per-file equivalent, so one
+  match applied every rule to every file
+- the scanner read its own saved reports, which quote remediation text naming
+  `DATABASE_URL`
+
+| zod, 65k lines | Before | After |
+|---|---|---|
+| Total findings | 130 | **86** |
+| False database findings | 46 | **2** |
+| Database category | 0/100 | **71/100** |
+
+Each fix has a regression test, and one test asserts a genuine N+1 through a
+global Prisma client still fires — tightening the matchers must not cost true
+detections. Run `pnpm -r test`.
+
+---
+
 ## Development
 
 ```bash

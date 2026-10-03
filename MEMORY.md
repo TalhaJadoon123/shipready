@@ -72,6 +72,15 @@ Run it: `pnpm --filter @shipready/web seed` then `pnpm --filter @shipready/web d
 **Never configured: `git remote -v` / no push has ever happened.** No remote is
 set up. This is still outstanding.
 
+**Scanner accuracy work (commit 9cce153) — do not regress.** Measured against
+zod (65k lines, no database). Four causes of repo-wide false positives, all
+fixed: bare `\bpg\b` matching any `.pg(`; bare `.get(`/`.create(`/`.select()`
+matching ordinary method names; no per-file DB gate (only project-wide); and the
+scanner reading its own saved reports (they quote remediation text naming
+DATABASE_URL). zod: 130 -> 86 findings, DB category 0/100 -> 71/100. Five
+regression tests pin each one. **`ORMS` matching is substring-based** because
+Prisma installs as `@prisma/client`; plain set membership silently fails.
+
 **Real gaps I left rather than papering over:**
 
 - The Drizzle adapter for Postgres/PGlite is **not written**. `createDatabase()`
