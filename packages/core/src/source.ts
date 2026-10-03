@@ -366,9 +366,13 @@ export function matchLines(content: string, re: RegExp): LineMatch[] {
   const lines = lineTexts(content);
   const lineIndex = buildLineIndex(content);
   const results: LineMatch[] = [];
+  // One global regex for the whole loop, reset per line. Constructing a new
+  // RegExp per line is expensive -- the pattern is recompiled every time -- and
+  // this runs once per file per rule.
+  const rx = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
   for (let i = 0; i < lines.length; i++) {
     const text = lines[i]!;
-    const rx = new RegExp(re.source, re.flags.includes('g') ? re.flags : `${re.flags}g`);
+    rx.lastIndex = 0;
     let m: RegExpExecArray | null;
     while ((m = rx.exec(text)) !== null) {
       if (m[0].length === 0) {
@@ -425,10 +429,31 @@ interface LineIndex {
   starts: number[];
 }
 
+/**
+ * A line index, memoized on the content it was built from.
+ *
+ * Every rule that calls `match` or `matchCode` needs this, and building it is
+ * an O(n) walk of the whole file, so rebuilding it per rule meant paying for
+ * the file length once per rule. Within one rule the same two strings recur --
+ * the original content and its masked copy -- so a one-entry cache would
+ * thrash between them. Two entries, keyed by identity, holding nothing else
+ * alive, so it cannot leak.
+ */
+let lineIndexMemo: { content: string; index: LineIndex }[] = [];
+
 function buildLineIndex(content: string): LineIndex {
+  for (const entry of lineIndexMemo) {
+    if (entry.content === content) {
+      // Move to front so the most recently used stays warm.
+      lineIndexMemo = [entry, ...lineIndexMemo.filter((e) => e !== entry)];
+      return entry.index;
+    }
+  }
   const starts = [0];
   for (let i = 0; i < content.length; i++) if (content[i] === '\n') starts.push(i + 1);
-  return { starts };
+  const index: LineIndex = { starts };
+  lineIndexMemo = [{ content, index }, ...lineIndexMemo].slice(0, 2);
+  return index;
 }
 
 function locate(index: LineIndex, offset: number): { line: number; column: number } {
@@ -451,20 +476,39 @@ export class SourceFile {
   readonly path: string;
   readonly content: string;
   readonly language: Language;
-  /** Comments blanked, byte offsets preserved. */
-  readonly noComments: string;
-  /** Comments and string bodies blanked. */
-  readonly noCommentsOrStrings: string;
   readonly lines: string[];
   readonly comments: CommentRecord[];
+
+  /**
+   * Comments blanked, byte offsets preserved.
+   *
+   * Lazy. Masking walks the whole file character by character, and most rules
+   * never look at it -- computing both masks eagerly doubled the cost of
+   * constructing every file for the sake of two strings the majority of rules
+   * ignore.
+   */
+  private _noComments?: string;
+  private _noCommentsLines?: string[];
+  private _noCommentsOrStrings?: string;
+  private _commentsByLine?: Map<number, CommentRecord[]>;
+
+  /** Comments and string bodies blanked. */
+  get noComments(): string {
+    this._noComments ??= maskComments(this.content, this.language);
+    return this._noComments;
+  }
+
+  get noCommentsOrStrings(): string {
+    this._noCommentsOrStrings ??= maskCommentsAndStrings(this.content, this.language);
+    return this._noCommentsOrStrings;
+  }
+
   private readonly lineIndex: LineIndex;
 
   constructor(path: string, content: string) {
     this.path = path;
     this.content = content;
     this.language = languageOf(path);
-    this.noComments = maskComments(content, this.language);
-    this.noCommentsOrStrings = maskCommentsAndStrings(content, this.language);
     this.lines = content.split(/\r?\n/);
     this.comments = extractComments(content, this.language);
     this.lineIndex = buildLineIndex(content);
@@ -474,8 +518,17 @@ export class SourceFile {
     return (this.lines[n - 1] ?? '').trim();
   }
 
+  /**
+   * A single line with comments blanked.
+   *
+   * The split is cached. Rules call this inside nested loops -- once per line
+   * per outer line -- so re-splitting the whole file on every call made scanning
+   * quadratic in file length: an 8,000-line file took 61 seconds, and cost per
+   * line climbed from 2.4ms to 7.6ms as files grew.
+   */
   lineNoComments(n: number): string {
-    return (this.noComments.split(/\r?\n/)[n - 1] ?? '').trim();
+    this._noCommentsLines ??= this.noComments.split(/\r?\n/);
+    return (this._noCommentsLines[n - 1] ?? '').trim();
   }
 
   get lineCount(): number {
@@ -515,13 +568,33 @@ export class SourceFile {
    */
   hasExplanatoryCommentNear(line: number, needles: readonly string[], lookback = 2): boolean {
     for (let l = line; l > Math.max(0, line - lookback); l--) {
-      for (const c of this.comments) {
+      for (const c of this.commentsOn(l)) {
         if (c.line < l || c.line > l + 1) continue;
         const text = c.text.toLowerCase();
         if (needles.some((n) => text.includes(n.toLowerCase()))) return true;
       }
     }
     return false;
+  }
+
+  /**
+   * Comments starting on a given line.
+   *
+   * Indexed once per file. These two predicates are called once per candidate
+   * finding, and each used to walk every comment in the file -- quadratic on a
+   * heavily-commented file, and comments are everywhere in real code.
+   */
+  private commentsOn(line: number): CommentRecord[] {
+    if (!this._commentsByLine) {
+      const map = new Map<number, CommentRecord[]>();
+      for (const c of this.comments) {
+        const list = map.get(c.line);
+        if (list) list.push(c);
+        else map.set(c.line, [c]);
+      }
+      this._commentsByLine = map;
+    }
+    return this._commentsByLine.get(line) ?? [];
   }
 
   /** `shipready-disable-next-line [rule-id]` / `shipready-disable [rule-id]`. */
