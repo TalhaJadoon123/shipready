@@ -18,7 +18,7 @@ export interface RadarDatum {
  * A codebase can score 90 with one category at 20, and that is exactly the
  * case a bar chart hides.
  */
-export function RadarChart({ categories }: { categories: RadarDatum[] }) {
+export function RadarChart({ categories }: { categories: RadarDatum[] }): React.JSX.Element {
   if (categories.length < 3) {
     return <div className="empty">Not enough categories for a radar view.</div>;
   }
@@ -83,7 +83,7 @@ export function RadarChart({ categories }: { categories: RadarDatum[] }) {
 }
 
 /** The score over time. */
-export function TrendsChart({ points }: { points: { at: string; score: number }[] }) {
+export function TrendsChart({ points }: { points: { at: string; score: number }[] }): React.JSX.Element {
   if (points.length < 2) {
     return <div className="empty">Two or more scans are needed to show a trend.</div>;
   }

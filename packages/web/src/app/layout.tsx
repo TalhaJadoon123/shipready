@@ -14,7 +14,9 @@ export const metadata: Metadata = {
   description: 'Vibe-coded. Production-proven.',
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+// Explicit return type: Next infers the component's type and needs to name it
+// in the generated route manifest, which it cannot do across a pnpm store path.
+export default function RootLayout({ children }: { children: React.ReactNode }): React.JSX.Element {
   return (
     <html lang="en">
       <body>{children}</body>

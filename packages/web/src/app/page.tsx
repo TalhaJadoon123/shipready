@@ -1,7 +1,7 @@
 import { use } from 'react';
 import { latestScan } from '../lib/store.js';
-import { TrendsChart, RadarChart } from '../components/charts.jsx';
-import { BlockerList } from '../components/blockers.jsx';
+import { TrendsChart, RadarChart } from '../components/charts.js';
+import { BlockerList } from '../components/blockers.js';
 
 /**
  * The dashboard.
@@ -13,11 +13,13 @@ import { BlockerList } from '../components/blockers.jsx';
  */
 export const dynamic = 'force-dynamic';
 
+// Explicit return type for the same reason as RootLayout: Next has to write
+// this component's type into the route manifest.
 export default async function Dashboard({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+}): Promise<React.JSX.Element> {
   const params = await searchParams;
   const projectId = typeof params.project === 'string' ? params.project : 'default';
   const scan = await latestScan(projectId);

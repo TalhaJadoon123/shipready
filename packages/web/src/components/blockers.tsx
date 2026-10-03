@@ -14,7 +14,7 @@ export interface Blocker {
  * says "5 blockers" and then makes you go find them has moved the work rather
  * than removed it; the whole point is that this list is actionable on its own.
  */
-export function BlockerList({ blockers }: { blockers: Blocker[] }) {
+export function BlockerList({ blockers }: { blockers: Blocker[] }): React.JSX.Element {
   const rank = { blocker: 0, degradation: 1, cosmetic: 2 } as Record<string, number>;
   const sorted = [...blockers].sort(
     (a, b) => (rank[a.productionImpact] ?? 3) - (rank[b.productionImpact] ?? 3),
