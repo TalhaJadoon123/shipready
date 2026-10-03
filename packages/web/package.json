@@ -1,0 +1,37 @@
+{
+  "name": "@shipready/web",
+  "version": "0.1.0",
+  "private": true,
+  "description": "ShipReady dashboard: readiness trends, agent traces, compliance status and invoice validation history.",
+  "type": "module",
+  "scripts": {
+    "dev": "next dev --port 3001",
+    "build": "next build",
+    "start": "next start --port 3001",
+    "lint": "next lint",
+    "typecheck": "tsc --noEmit",
+    "test": "vitest run"
+  },
+  "dependencies": {
+    "@shipready/compliance": "workspace:*",
+    "@shipready/core": "workspace:*",
+    "@shipready/einvoice": "workspace:*",
+    "@shipready/observer": "workspace:*",
+    "drizzle-orm": "^0.38.3",
+    "next": "15.1.3",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "pg": "^8.13.1",
+    "postgres": "^3.4.5",
+    "zod": "^3.24.1"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "@types/react": "^19.0.2",
+    "@electric-sql/pglite": "^0.2.15",
+    "@types/pg": "^8.11.10",
+    "@types/react-dom": "^19.0.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  }
+}

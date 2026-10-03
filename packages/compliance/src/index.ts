@@ -62,7 +62,7 @@ export {
   type BundleManifest,
 } from './export.js';
 
-export { formatComplianceReport, type ComplianceDashboard } from './dashboard.js';
+export { buildDashboard, formatComplianceReport, type ComplianceDashboard, type FrameworkStatus } from './dashboard.js';
 
 /** Convenience: answers in, documents out. */
 export function generateFor(answer: ComplianceAnswer, frameworks?: Framework[]): GenerateResult {

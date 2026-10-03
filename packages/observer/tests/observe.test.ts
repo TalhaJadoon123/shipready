@@ -86,11 +86,6 @@ describe('observe', () => {
     }
   });
 
-  it('does not store prompt text by default', async () => {
-    const raw = await readFile(dbPath, 'utf8');
-    expect(raw).not.toContain('Summarise this incident log');
-  });
-
   it('reports a non-Node agent honestly instead of pretending', async () => {
     // Whatever the platform is, the answer has to be "I could not instrument
     // this" -- never a fabricated trace.
@@ -147,37 +142,64 @@ describe('observe', () => {
 });
 
 describe('the recorded trace', () => {
-  it('identifies the hosts the agent contacted', async () => {
+  /** The trace id from the first capture, so these assertions do not depend on order. */
+  let capturedId: string | undefined;
+
+  beforeAll(async () => {
+    const result = await observe({
+      command: `node ${MOCK_AGENT} --calls 2`,
+      dbPath,
+      cwd: dir,
+      costBudget: 10,
+    });
+    capturedId = result.trace?.summary.id;
+  }, 120_000);
+
+  it('captured a trace to inspect', () => {
+    expect(capturedId).toBeTruthy();
+  });
+
+  it('identifies the hosts the agent contacted', () => {
     const store = new TraceStore(dbPath);
     try {
-      const latest = store.latest();
-      expect(latest).not.toBeNull();
-      expect(latest!.hosts.length).toBeGreaterThan(0);
-      // Only hosts, never full URLs with query strings.
-      const events = store.getEvents(latest!.id, { kind: 'network' });
-      for (const event of events) expect(JSON.stringify(event)).not.toContain('?');
+      const summary = store.getSummary(capturedId!)!;
+      expect(summary.hosts.length).toBeGreaterThan(0);
+      // Hosts only, never full URLs with query strings.
+      for (const event of store.getEvents(capturedId!, { kind: 'network' })) {
+        expect(JSON.stringify(event)).not.toContain('?');
+      }
     } finally {
       store.close();
     }
   });
 
-  it('distributes tool calls by name', async () => {
+  it('distributes tool calls by name', () => {
     const store = new TraceStore(dbPath);
     try {
-      const latest = store.latest();
-      expect(Object.keys(latest!.toolDistribution)).toContain('read_file');
+      const summary = store.getSummary(capturedId!)!;
+      expect(Object.keys(summary.toolDistribution)).toContain('read_file');
     } finally {
       store.close();
     }
   });
 
-  it('orders events by sequence', async () => {
+  it('orders events by sequence', () => {
     const store = new TraceStore(dbPath);
     try {
-      const latest = store.latest()!;
-      const events = store.getEvents(latest.id);
-      const seqs = events.map((e) => e.seq);
+      const seqs = store.getEvents(capturedId!).map((e) => e.seq);
       expect(seqs).toEqual([...seqs].sort((a, b) => a - b));
+    } finally {
+      store.close();
+    }
+  });
+
+  it('never stores prompt text', () => {
+    const store = new TraceStore(dbPath);
+    try {
+      const events = store.getEvents(capturedId!);
+      for (const event of events) {
+        expect(JSON.stringify(event)).not.toContain('Summarise this incident');
+      }
     } finally {
       store.close();
     }

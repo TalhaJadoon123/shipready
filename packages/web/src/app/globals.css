@@ -1,0 +1,235 @@
+/**
+ * Dashboard styles.
+ *
+ * Plain CSS rather than Tailwind: this is a single screen with about twenty
+ * components, and a build-time CSS framework plus a config file plus a class
+ * name on every element is more surface than the design needs. The variables
+ * below are the design system; everything else composes from them.
+ */
+
+:root {
+  --bg: #0b0d10;
+  --panel: #12151a;
+  --panel-2: #171b21;
+  --border: #23272e;
+  --text: #e6e8eb;
+  --muted: #8b8d98;
+  --accent: #0091ff;
+  --ok: #30a46c;
+  --warn: #ffb224;
+  --bad: #e5484d;
+  --radius: 10px;
+  --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, monospace;
+}
+
+@media (prefers-color-scheme: light) {
+  :root {
+    --bg: #f7f8f9;
+    --panel: #ffffff;
+    --panel-2: #f0f1f3;
+    --border: #e2e4e7;
+    --text: #0b0d10;
+    --muted: #5d6068;
+  }
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  background: var(--bg);
+  color: var(--text);
+  font: 15px/1.6 system-ui, -apple-system, 'Segoe UI', Roboto, sans-serif;
+  padding: 32px 20px 80px;
+}
+
+.wrap {
+  max-width: 1120px;
+  margin: 0 auto;
+}
+
+h1 {
+  font-size: 22px;
+  margin: 0 0 4px;
+  letter-spacing: -0.02em;
+}
+
+h2 {
+  font-size: 13px;
+  text-transform: uppercase;
+  letter-spacing: 0.08em;
+  color: var(--muted);
+  margin: 34px 0 12px;
+  font-weight: 600;
+}
+
+h3 {
+  font-size: 15px;
+  margin: 0 0 8px;
+}
+
+.sub {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.grid {
+  display: grid;
+  gap: 12px;
+}
+
+.g2 {
+  grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+}
+
+.g4 {
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 16px;
+}
+
+.stat-label {
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.07em;
+  color: var(--muted);
+}
+
+.stat-value {
+  font-size: 26px;
+  font-weight: 700;
+  margin-top: 2px;
+}
+
+.hero {
+  display: flex;
+  gap: 28px;
+  align-items: center;
+  flex-wrap: wrap;
+  background: var(--panel);
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  padding: 24px;
+}
+
+.score {
+  font-size: 54px;
+  font-weight: 800;
+  letter-spacing: -0.03em;
+  line-height: 1;
+}
+
+.verdict {
+  display: inline-block;
+  padding: 5px 12px;
+  border-radius: 6px;
+  font-weight: 700;
+  font-size: 13px;
+  color: #fff;
+}
+
+.bar {
+  height: 8px;
+  border-radius: 4px;
+  background: var(--panel-2);
+  overflow: hidden;
+}
+
+.bar > div {
+  height: 100%;
+  border-radius: 4px;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 13px;
+}
+
+th {
+  text-align: left;
+  font-size: 11px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+  font-weight: 600;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border);
+}
+
+td {
+  padding: 9px 10px;
+  border-bottom: 1px solid var(--border);
+  vertical-align: top;
+}
+
+tr:last-child td {
+  border-bottom: none;
+}
+
+code,
+.mono {
+  font-family: var(--mono);
+  font-size: 12px;
+}
+
+.pill {
+  display: inline-block;
+  font-size: 11px;
+  padding: 1px 7px;
+  border-radius: 20px;
+  background: var(--panel-2);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.pill.bad {
+  color: var(--bad);
+  border-color: var(--bad);
+}
+
+.pill.warn {
+  color: var(--warn);
+  border-color: var(--warn);
+}
+
+.pill.ok {
+  color: var(--ok);
+  border-color: var(--ok);
+}
+
+.blocker {
+  border-left: 3px solid var(--bad);
+  padding-left: 14px;
+  margin-bottom: 18px;
+}
+
+.empty {
+  color: var(--muted);
+  font-style: italic;
+}
+
+.spark {
+  display: block;
+  width: 100%;
+  height: 90px;
+}
+
+.footer {
+  margin-top: 46px;
+  padding-top: 16px;
+  border-top: 1px solid var(--border);
+  color: var(--muted);
+  font-size: 12px;
+}
+
+a {
+  color: var(--accent);
+}
