@@ -1,5 +1,7 @@
 import { drizzle as drizzlePostgres } from 'drizzle-orm/node-postgres';
 import { drizzle as drizzlePglite } from 'drizzle-orm/pglite';
+import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
+import { dirname, join } from 'node:path';
 import { schema } from './schema.js';
 
 /**
@@ -18,13 +20,33 @@ import { schema } from './schema.js';
  */
 export type Driver = 'postgres' | 'pglite' | 'memory';
 
+/**
+ * Where the in-memory driver snapshots itself between processes.
+ *
+ * Defaults to `.shipready/dashboard.json` relative to the working directory, so
+ * `pnpm seed` in one terminal and `pnpm dev` in another see the same data. Set
+ * the variable to move it, or to the empty string to disable persistence
+ * entirely and keep the store purely in-process -- which is what the tests do,
+ * since a shared file would leak state between them.
+ *
+ * Read lazily rather than at module load, so a script can set it after its own
+ * imports have already been evaluated.
+ */
+function memoryPath(): string | undefined {
+  const configured = process.env.SHIPREADY_MEMORY_PATH;
+  if (configured === '') return undefined;
+  return configured ?? join('.shipready', 'dashboard.json');
+}
+
 function pickDriver(): Driver {
   if (process.env.SHIPREADY_DATABASE === 'memory') return 'memory';
   if (process.env.SHIPREADY_DATABASE === 'pglite') return 'pglite';
   if (process.env.DATABASE_URL) return 'postgres';
-  // No configuration: still run, still work. Production without a database URL
-  // is a misconfiguration, so it fails loudly instead of silently losing writes.
-  return process.env.NODE_ENV === 'production' ? 'postgres' : 'pglite';
+  // No configuration. Development gets the file-backed in-memory store: no
+  // database to install, and data survives a restart. Production without a
+  // database URL is a misconfiguration, so it fails loudly instead of silently
+  // losing writes.
+  return process.env.NODE_ENV === 'production' ? 'postgres' : 'memory';
 }
 
 export interface ScanRecord {
@@ -151,6 +173,83 @@ export function createMemoryDatabase() {
   let nextComplianceId = 1;
   let nextInvoiceId = 1;
 
+  /**
+   * Snapshot persistence.
+   *
+   * Written after every mutation rather than on a timer: a dashboard that loses
+   * the scan you just uploaded because the process died is worse than one that
+   * writes a small file. The snapshot is a few tens of kilobytes for a realistic
+   * history, so a synchronous write per request is the cheaper trade.
+   */
+  const flush = (): void => {
+    const file = memoryPath();
+    if (!file) return;
+    try {
+      mkdirSync(dirname(file), { recursive: true });
+      writeFileSync(
+        file,
+        JSON.stringify({
+          scans,
+          traces,
+          compliance,
+          invoices,
+          nextScanId,
+          nextFindingId,
+          nextComplianceId,
+          nextInvoiceId,
+        }),
+        'utf8',
+      );
+    } catch (error) {
+      // A read-only filesystem should not take the dashboard down; it should
+      // just stop persisting and say so in the server log.
+      console.warn(`[shipready] could not persist dashboard snapshot to ${file}:`, error);
+    }
+  };
+
+  /**
+   * `Date` serialises to an ISO string via its own `toJSON`, which runs *before*
+   * any `JSON.stringify` replacer would see it -- so a replacer cannot tag dates
+   * and must not try. The known timestamp fields are revived by name instead.
+   * Leaving one as a string would not fail loudly; it would just make every
+   * `getTime()` in the sorts below return `NaN`.
+   */
+  const asDate = (value: unknown): Date => (value instanceof Date ? value : new Date(value as string));
+
+  const snapshot = memoryPath();
+  if (snapshot) {
+    try {
+      const raw = JSON.parse(readFileSync(snapshot, 'utf8')) as Record<string, unknown>;
+      const loaded = {
+        scans: (raw.scans ?? []) as (typeof scans)[number][],
+        traces: (raw.traces ?? []) as TraceRecord[],
+        compliance: (raw.compliance ?? []) as ComplianceRecord[],
+        invoices: (raw.invoices ?? []) as InvoiceRecord[],
+      };
+      // Ids survive the round trip; timestamps come back as ISO strings.
+      for (const scan of loaded.scans) scan.createdAt = asDate(scan.createdAt);
+      for (const trace of loaded.traces) trace.startedAt = asDate(trace.startedAt);
+      for (const pack of loaded.compliance) pack.createdAt = asDate(pack.createdAt);
+      for (const invoice of loaded.invoices) invoice.createdAt = asDate(invoice.createdAt);
+
+      scans.push(...loaded.scans);
+      traces.push(...loaded.traces);
+      compliance.push(...loaded.compliance);
+      invoices.push(...loaded.invoices);
+
+      nextScanId = Number(raw.nextScanId ?? scans.length + 1);
+      nextComplianceId = Number(raw.nextComplianceId ?? compliance.length + 1);
+      nextInvoiceId = Number(raw.nextInvoiceId ?? invoices.length + 1);
+      nextFindingId = scans.reduce((max, s) => {
+        const ids = (s.findings as { id?: number }[]).map((f) => f.id ?? 0);
+        return Math.max(max, ...ids, 0);
+      }, 0) + 1;
+    } catch {
+      // A missing or corrupt snapshot is not worth failing a request over. The
+      // store starts empty and the next write replaces the bad file.
+    }
+  }
+
   const database = {
     driver: 'memory' as const,
 
@@ -168,11 +267,15 @@ export function createMemoryDatabase() {
         findingsCount: Number(payload.findingsCount ?? 0),
         categories: (payload.categories ?? {}) as Record<string, unknown>,
         summary: (payload.summary ?? {}) as Record<string, unknown>,
-        report: payload,
+        // The report as it arrived, not the denormalised wrapper around it. The
+        // wrapper's `categories` is a keyed map built for the radar; anything
+        // rendering the report wants the original array.
+        report: (payload.report ?? payload) as unknown,
         findings: [],
         createdAt: new Date(),
       };
       scans.push(record);
+      flush();
       return record;
     },
 
@@ -182,6 +285,7 @@ export function createMemoryDatabase() {
       for (const finding of findings) {
         scan.findings.push({ ...finding, id: nextFindingId++, scanId });
       }
+      flush();
     },
 
     async listScans(projectId: string, limit = 50) {
@@ -230,6 +334,7 @@ export function createMemoryDatabase() {
         errors: Number(trace.errors ?? 0),
         summary: trace,
       });
+      flush();
       return { traceId: trace.id };
     },
 
@@ -257,6 +362,7 @@ export function createMemoryDatabase() {
     ) {
       const id = nextComplianceId++;
       compliance.push({ id, projectId, ...pack, createdAt: new Date() });
+      flush();
       return id;
     },
 
@@ -297,6 +403,7 @@ export function createMemoryDatabase() {
         issues: invoice.issues,
         createdAt: new Date(),
       });
+      flush();
       return id;
     },
 

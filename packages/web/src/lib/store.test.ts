@@ -20,6 +20,9 @@ let dir: string;
 beforeEach(async () => {
   dir = await mkdtemp(join(tmpdir(), 'shipready-web-'));
   process.env.SHIPREADY_DATABASE = 'memory';
+  // The file-backed store is the default outside tests; an empty path turns it
+  // back into a purely in-process one so each test starts from nothing.
+  process.env.SHIPREADY_MEMORY_PATH = '';
   // The store caches its handle, so a new test needs a new process-level one.
   const { resetDb } = await import('../db/client.js');
   resetDb();
@@ -89,6 +92,24 @@ describe('the scan store', () => {
 
     expect(await listFindings('a')).toHaveLength(report.findings.length);
     expect(await listFindings('b')).toHaveLength(report.findings.length);
+  });
+
+  it('keeps the original report intact alongside the denormalised columns', async () => {
+    const report = await realReport();
+    await storeScan({ projectId: 'p1', report: report as unknown as Record<string, unknown> });
+
+    const latest = (await latestScan('p1')) as unknown as {
+      report: { categories: unknown[]; findings: unknown[]; topBlockers?: unknown[] };
+      categories: Record<string, unknown>;
+    };
+
+    // The radar reads the keyed map...
+    expect(latest.categories).toBeTypeOf('object');
+    // ...while anything rendering the report needs the array it started as.
+    expect(Array.isArray(latest.report.categories)).toBe(true);
+    expect(latest.report.categories).toHaveLength(report.categories.length);
+    expect(Array.isArray(latest.report.findings)).toBe(true);
+    expect(latest.report.findings).toHaveLength(report.findings.length);
   });
 
   it('returns nothing for an unknown project', async () => {
@@ -315,5 +336,84 @@ describe('traces, compliance and invoices', () => {
 
   it('declares the countries it supports', () => {
     expect(SUPPORTED.map((s) => s.country)).toContain('BR');
+  });
+});
+
+/**
+ * Snapshot persistence.
+ *
+ * A separate `describe` because these tests are about the store surviving a
+ * process, which means juggling the module-level cache: `resetDb()` drops the
+ * handle, and the next call re-reads the file. Without that, "it persisted"
+ * would pass even if nothing was ever written.
+ */
+describe('the file-backed store', () => {
+  beforeEach(() => {
+    process.env.SHIPREADY_DATABASE = 'memory';
+    process.env.SHIPREADY_MEMORY_PATH = join(dir, 'nested', 'dashboard.json');
+  });
+
+  it('writes a snapshot and reads it back in a fresh handle', async () => {
+    const { resetDb } = await import('../db/client.js');
+
+    await storeScan({
+      projectId: 'p1',
+      report: { score: 77, grade: 'C', verdict: 'NEEDS WORK', summary: { totalFindings: 3, blockers: 1 } },
+    });
+    resetDb();
+
+    const latest = await latestScan('p1');
+    expect(latest?.score).toBe(77);
+    expect(latest?.grade).toBe('C');
+    expect(latest?.blockers).toBe(1);
+  });
+
+  it('keeps ids unique across a reload rather than restarting the sequence', async () => {
+    const { resetDb } = await import('../db/client.js');
+
+    const report = { score: 50, grade: 'F', verdict: 'NOT READY', summary: { totalFindings: 0, blockers: 0 } };
+    await storeScan({ projectId: 'p1', report });
+    await storeScan({ projectId: 'p1', report });
+    resetDb();
+
+    await storeScan({ projectId: 'p1', report });
+    expect((await latestScan('p1'))?.id).toBe(3);
+  });
+
+  it('starts empty rather than throwing when the snapshot is corrupt', async () => {
+    const { resetDb } = await import('../db/client.js');
+    resetDb();
+
+    await storeScan({ projectId: 'p1', report: { score: 10, summary: {} } });
+    resetDb();
+    // Truncate the file mid-object, the way a killed process would.
+    const { writeFile, readFile } = await import('node:fs/promises');
+    const raw = await readFile(process.env.SHIPREADY_MEMORY_PATH!, 'utf8');
+    await writeFile(process.env.SHIPREADY_MEMORY_PATH!, raw.slice(0, Math.floor(raw.length / 2)), 'utf8');
+    resetDb();
+
+    expect(await latestScan('p1')).toBeNull();
+    // And the next write replaces the bad file rather than appending to it.
+    await storeScan({ projectId: 'p1', report: { score: 20, summary: {} } });
+    expect((await latestScan('p1'))?.score).toBe(20);
+  });
+
+  it('preserves timestamps through the round trip', async () => {
+    const { resetDb } = await import('../db/client.js');
+    const { storeTrace, listTraces } = await import('./store.js');
+    const startedAt = new Date('2026-03-04T05:06:07.000Z').toISOString();
+
+    await storeTrace({ projectId: 'p1', trace: { id: 't1', startedAt, command: 'node a.js', totalCostUsd: 0.5 } });
+    resetDb();
+
+    const [trace] = await listTraces('p1');
+    // A snapshot turns Date into a string; if it were not revived, sorting by
+    // startedAt would throw on the missing method rather than return nothing.
+    expect(trace!.startedAt).toBeInstanceOf(Date);
+    expect(trace!.startedAt.toISOString()).toBe(startedAt);
+  });
+
+  afterEach(() => {
+    process.env.SHIPREADY_MEMORY_PATH = '';
   });
 });

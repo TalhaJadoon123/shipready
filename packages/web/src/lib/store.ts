@@ -1,5 +1,29 @@
 import { getDb, createMemoryDatabase, type Driver } from '../db/client.js';
 
+/** The operation surface `lib/store.ts` depends on. */
+type Store = ReturnType<typeof createMemoryDatabase>;
+
+/**
+ * The store handle, narrowed to the operations below.
+ *
+ * Only the file-backed in-memory driver implements them today. Selecting
+ * Postgres or PGlite gets a named error rather than
+ * `db.insertScan is not a function` from the middle of a request, because the
+ * Drizzle adapter is the one part of this layer still to be written -- and a
+ * deployment that reaches it should be told that plainly rather than discover it
+ * as an unhandled rejection.
+ */
+function store(): Store {
+  const db = getDb() as Partial<Store> & { driver?: Driver };
+  if (typeof db.insertScan !== 'function') {
+    throw new Error(
+      `ShipReady dashboard: the '${db.driver ?? 'postgres'}' driver is not wired up yet. ` +
+        'Set SHIPREADY_DATABASE=memory to run on the file-backed store.',
+    );
+  }
+  return db as Store;
+}
+
 /**
  * Database-backed storage.
  *
@@ -22,7 +46,7 @@ export async function storeScan(input: {
   commitSha?: string;
   branch?: string;
 }): Promise<StoredScan> {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
 
   const report = input.report;
   const categories: Record<string, unknown> = {};
@@ -76,24 +100,24 @@ export async function storeScan(input: {
 }
 
 export async function listScans(projectId: string, limit = 50) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return db.listScans(projectId, limit);
 }
 
 export async function latestScan(projectId: string) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return db.latestScan(projectId);
 }
 
 export async function listFindings(projectId: string, scanId?: number, limit = 200) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   const scan = scanId ?? (await db.latestScan(projectId))?.id;
   if (scan === undefined) return [];
   return db.listFindings(scan, limit);
 }
 
 export async function trends(projectId: string, limit = 60) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return db.trends(projectId, limit);
 }
 
@@ -107,13 +131,13 @@ export async function storeTrace(input: {
   projectId: string;
   trace: Record<string, unknown> & { id: string; startedAt: string; command: string };
 }): Promise<{ traceId: string }> {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   db.recordTrace(input.projectId, input.trace);
   return { traceId: input.trace.id };
 }
 
 export async function listTraces(projectId: string, limit = 50) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return db.listTraces(projectId, limit);
 }
 
@@ -129,12 +153,12 @@ export async function storeCompliance(input: {
     documentCount: number;
   };
 }): Promise<{ complianceId: number }> {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return { complianceId: db.recordCompliance(input.projectId, input.pack) };
 }
 
 export async function listCompliance(projectId: string, limit = 20) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return db.listCompliance(projectId, limit);
 }
 
@@ -150,12 +174,12 @@ export async function storeInvoice(input: {
   score: number;
   issues: unknown[];
 }): Promise<{ invoiceId: number }> {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return { invoiceId: db.recordInvoice(input) };
 }
 
 export async function listInvoices(projectId: string, limit = 50) {
-  const db = getDb() as ReturnType<typeof createMemoryDatabase>;
+  const db = store();
   return db.listInvoices(projectId, limit);
 }
 
