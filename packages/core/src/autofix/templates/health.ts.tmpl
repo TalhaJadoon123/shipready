@@ -1,0 +1,36 @@
+/**
+ * Liveness and readiness probes.
+ *
+ * Liveness (/health) must NOT check dependencies. If liveness depends on the
+ * database, a brief database blip restarts every pod and turns an outage into
+ * an outage plus a crash loop.
+ *
+ * Readiness (/health/ready) SHOULD check dependencies, so the load balancer
+ * stops sending traffic to an instance that cannot answer.
+ */
+import type { Request, Response } from 'express';
+import { checkDependencies } from './dependencies';
+
+let ready = true;
+
+export function health(_req: Request, res: Response): void {
+  res.status(200).json({ status: 'ok', uptime: process.uptime() });
+}
+
+export async function readiness(_req: Request, res: Response): Promise<void> {
+  const checks = await checkDependencies();
+  const ok = Object.values(checks).every((v) => v === 'ok');
+  ready = ok;
+  res.status(ok ? 200 : 503).json({ status: ok ? 'ready' : 'degraded', checks });
+}
+
+/** Call from a SIGTERM handler so the load balancer drains before exit. */
+export function isReady(): boolean {
+  return ready;
+}
+
+// Wire up (in your server file):
+//   import { health, readiness } from './health';
+//   app.get('/health', health);
+//   app.get('/health/ready', readiness);
+//   process.on('SIGTERM', () => { if (isReady()) process.exit(0); });

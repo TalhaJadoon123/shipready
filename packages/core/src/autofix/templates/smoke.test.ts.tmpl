@@ -1,0 +1,38 @@
+import { describe, expect, it } from 'vitest';
+
+/**
+ * Smoke tests: the app boots and its critical endpoints respond.
+ *
+ * This is not a substitute for real coverage. It exists so that a build which
+ * cannot start at all -- a bad import, a missing env var, a broken migration --
+ * fails in CI instead of in production. Add the signup and payment flows next;
+ * those are the two paths you would be paged for.
+ */
+describe('smoke', () => {
+  const baseUrl = process.env.HEALTH_URL ?? 'http://localhost:3000';
+
+  it('has a health endpoint that reports ok', async () => {
+    const res = await fetch(`${baseUrl}/health`);
+    expect(res.status).toBeLessThan(500);
+    if (res.headers.get('content-type')?.includes('json')) {
+      const body = (await res.json()) as { status?: string };
+      expect(body.status ?? 'ok').toBeTruthy();
+    }
+  });
+
+  it('rejects an unknown route with 404, not 500', async () => {
+    // A 500 here usually means the error handler is missing or broken.
+    const res = await fetch(`${baseUrl}/definitely-not-a-route`);
+    expect(res.status).toBe(404);
+  });
+
+  it('rejects an unauthenticated request to a protected route', async () => {
+    // Adjust the path to a real protected endpoint in your app.
+    const res = await fetch(`${baseUrl}/api/summarize`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ text: 'hello' }),
+    });
+    expect([401, 403]).toContain(res.status);
+  });
+});

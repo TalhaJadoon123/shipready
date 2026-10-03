@@ -1,0 +1,50 @@
+"""
+Prometheus metrics.
+
+At minimum: request count, error count and latency. If you call a model, add
+token usage and estimated cost: that is the metric which tells you whether you
+are about to have a bad month.
+"""
+import time
+
+from prometheus_client import Counter, Histogram, make_asgi_app
+from starlette.requests import Request
+
+REQUESTS = Counter(
+    "http_requests_total",
+    "HTTP requests",
+    ["method", "route", "status"],
+)
+LATENCY = Histogram(
+    "http_request_duration_seconds",
+    "HTTP request latency in seconds",
+    ["method", "route"],
+)
+LLM_TOKENS = Counter(
+    "llm_tokens_total",
+    "Tokens consumed by the model",
+    ["model", "direction"],
+)
+LLM_COST_USD = Counter(
+    "llm_cost_usd_total",
+    "Estimated spend in USD",
+    ["model"],
+)
+
+
+async def metrics_middleware(request: Request, call_next):
+    # Use the route template, not the raw URL: a per-URL label is unbounded
+    # cardinality and will take down your metrics backend.
+    route = getattr(request.scope.get("route"), "path", "unknown")
+    started = time.perf_counter()
+    response = await call_next(request)
+    LATENCY.labels(request.method, route).observe(time.perf_counter() - started)
+    REQUESTS.labels(request.method, route, response.status_code).inc()
+    return response
+
+
+metrics_app = make_asgi_app()
+
+# Wire up in main.py:
+#   app.mount("/metrics", metrics_app)
+#   app.middleware("http")(metrics_middleware)

@@ -1,0 +1,27 @@
+/**
+ * Sentry initialisation.
+ *
+ * Import this FIRST, before any other application code. For Next.js, register
+ * it as an instrumentation hook in next.config.js:
+ *
+ *   experimental: { instrumentationHook: true }
+ *
+ * tracesSampleRate: 1.0 in development so you see everything locally, ~0.2 in
+ * production. Sampling at 1.0 in production is expensive and rarely worth it.
+ * Keep sendDefaultPii false unless you have a reason: error reports are a copy
+ * of your production data and belong under the same retention policy.
+ */
+import * as Sentry from '@sentry/node';
+
+Sentry.init({
+  dsn: process.env.SENTRY_DSN,
+  environment: process.env.NODE_ENV ?? 'development',
+  tracesSampleRate: process.env.NODE_ENV === 'production' ? 0.2 : 1.0,
+  sendDefaultPii: false,
+});
+
+// Report handled errors from the global error handler:
+//   Sentry.captureException(err);
+//
+// Add breadcrumbs in the request middleware:
+//   Sentry.addBreadcrumb({ category: 'http', message: req.originalUrl });

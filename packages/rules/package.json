@@ -1,0 +1,28 @@
+{
+  "name": "@shipready/rules",
+  "version": "0.1.0",
+  "description": "ShipReady rule definitions in YAML. Public domain (CC0) so anyone can fork and adapt them.",
+  "license": "CC0-1.0",
+  "type": "module",
+  "main": "./index.js",
+  "types": "./index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./index.d.ts",
+      "import": "./index.js",
+      "default": "./index.js"
+    },
+    "./packs/*": "./packs/*",
+    "./package.json": "./package.json"
+  },
+  "files": ["index.js", "index.d.ts", "packs", "README.md"],
+  "scripts": {
+    "build": "node -e \"console.log('rules is data, nothing to build')\"",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "echo \"@shipready/rules: no lint (YAML + JSON only)\"",
+    "test": "node -e \"console.log('rules has no tests')\""
+  },
+  "devDependencies": {
+    "typescript": "^5.7.2"
+  }
+}

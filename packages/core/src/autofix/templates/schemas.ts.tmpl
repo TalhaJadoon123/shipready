@@ -1,0 +1,55 @@
+/**
+ * Request validation schemas.
+ *
+ * Validate at the boundary, before anything touches the database or a model.
+ * Reject unknown keys explicitly so a typo in a client field fails loudly
+ * instead of silently becoming undefined.
+ *
+ * Cost control is validation: cap string length before it becomes a prompt,
+ * and cap array length before it becomes N+1 queries.
+ */
+import { z } from 'zod';
+
+const bounded = (max: number) => z.string().trim().max(max);
+
+/** Shared primitives. Compose these rather than inventing new ones per route. */
+export const id = z.string().uuid();
+export const email = z.string().email().max(320).toLowerCase();
+export const shortText = bounded(280);
+export const longText = bounded(10_000);
+export const pagination = z.object({
+  limit: z.coerce.number().int().min(1).max(100).default(20),
+  cursor: z.string().max(200).optional(),
+});
+
+/**
+ * Example: a model-backed endpoint. The prompt is capped at 10k characters,
+ * which is both a cost control and a denial-of-service control.
+ */
+export const generateSchema = z
+  .object({
+    prompt: longText,
+    temperature: z.number().min(0).max(2).default(0.7),
+    maxTokens: z.number().int().min(1).max(4096).default(1024),
+  })
+  .strict();
+
+export const createUserSchema = z
+  .object({
+    email,
+    name: bounded(120),
+  })
+  .strict();
+
+export type GenerateInput = z.infer<typeof generateSchema>;
+export type CreateUserInput = z.infer<typeof createUserSchema>;
+
+// Usage in a route:
+//   import { generateSchema } from '../validation/schemas';
+//
+//   const parsed = generateSchema.safeParse(await req.json().catch(() => null));
+//   if (!parsed.success) {
+//     return res.status(400).json({ error: 'invalid_input', issues: parsed.error.issues });
+//   }
+//
+//   const { prompt } = parsed.data;   // fully typed, no untyped escape hatches

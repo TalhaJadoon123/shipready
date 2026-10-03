@@ -1,0 +1,13 @@
+node_modules/
+packages/*/dist/
+apps/*/dist/
+apps/*/.next/
+.turbo/
+coverage/
+*.tsbuildinfo
+.shipready/
+*.db
+*.db-journal
+
+# package tarballs
+*.tgz

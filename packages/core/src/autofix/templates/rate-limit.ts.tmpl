@@ -1,0 +1,55 @@
+/**
+ * Rate limiting.
+ *
+ * Register globally so a new route is protected by default. Adding a route
+ * without adding a limiter is exactly how AI endpoints end up unlimited: the
+ * developer added rate limiting in week one, added the AI feature in week
+ * six, and never registered the new route with the limiter.
+ *
+ * The limits below are starting points, not answers. For an endpoint that
+ * calls a model, derive the limit from cost per call rather than copying a
+ * round number.
+ */
+import rateLimit, { type RateLimitRequestHandler } from 'express-rate-limit';
+import type { Request, Response } from 'express';
+
+/** General per-user limit for ordinary endpoints. */
+const general: RateLimitRequestHandler = rateLimit({
+  windowMs: 60_000,
+  limit: 100,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => userIdFrom(req) ?? req.ip ?? 'anonymous',
+  handler: (_req: Request, res: Response) => {
+    res.status(429).json({ error: 'rate_limited', retryAfter: 60 });
+  },
+});
+
+/** Tight limit for anything that costs money per call. */
+const expensive: RateLimitRequestHandler = rateLimit({
+  windowMs: 60_000,
+  limit: 10,
+  standardHeaders: 'draft-7',
+  legacyHeaders: false,
+  keyGenerator: (req: Request) => userIdFrom(req) ?? req.ip ?? 'anonymous',
+  handler: (_req: Request, res: Response) => {
+    res.status(429).json({ error: 'rate_limited', retryAfter: 60 });
+  },
+});
+
+/**
+ * Key by user id when authenticated. IP alone does not stop one attacker with
+ * a rotating proxy pool, and it punishes users behind carrier NAT.
+ */
+function userIdFrom(req: Request): string | null {
+  const user = (req as Request & { user?: { id?: string } }).user;
+  return user?.id ?? null;
+}
+
+export { general, expensive };
+
+// Wire up (in your server file, BEFORE the routes):
+//   import { general, expensive } from './middleware/rate-limit';
+//   app.set('trust proxy', 1);        // required behind a proxy or every client shares one key
+//   app.use(general);
+//   app.post('/api/expensive', expensive, handler);

@@ -1,0 +1,71 @@
+"""
+Structured logging.
+
+Log objects, not interpolated strings. Interpolated logs cannot be queried: you
+cannot ask for every slow request by user, only grep for a substring.
+
+Redact personal data here rather than at each call site. See GDPR Art. 5
+(data minimisation) and Art. 32 (security of processing).
+"""
+import json
+import logging
+import logging.config
+import sys
+
+SENSITIVE_KEYS = {
+    "password",
+    "token",
+    "authorization",
+    "api_key",
+    "secret",
+    "ssn",
+    "credit_card",
+}
+
+
+class RedactingFilter(logging.Filter):
+    def filter(self, record: logging.LogRecord) -> bool:
+        if isinstance(record.args, dict):
+            for key in list(record.args):
+                if key.lower() in SENSITIVE_KEYS:
+                    record.args[key] = "[REDACTED]"
+        return True
+
+
+class JsonFormatter(logging.Formatter):
+    def format(self, record: logging.LogRecord) -> str:
+        payload = {
+            "level": record.levelname.lower(),
+            "logger": record.name,
+            "message": record.getMessage(),
+        }
+        if isinstance(record.args, dict):
+            for key, value in record.args.items():
+                payload[key] = value
+        if record.exc_info:
+            payload["exception"] = self.formatException(record.exc_info)
+        return json.dumps(payload, default=str)
+
+
+logging.config.dictConfig(
+    {
+        "version": 1,
+        "disable_existing_loggers": False,
+        "filters": {"redact": {"()": RedactingFilter}},
+        "formatters": {"json": {"()": JsonFormatter}},
+        "handlers": {
+            "stdout": {
+                "class": "logging.StreamHandler",
+                "stream": sys.stdout,
+                "formatter": "json",
+                "filters": ["redact"],
+            }
+        },
+        "root": {"handlers": ["stdout"], "level": "INFO"},
+    }
+)
+
+logger = logging.getLogger(__name__)
+
+# Usage:
+#   logger.info("user.created", extra={"user_id": user.id})

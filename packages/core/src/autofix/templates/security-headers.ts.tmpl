@@ -1,0 +1,51 @@
+/**
+ * Security response headers.
+ *
+ * Register as the FIRST middleware, so headers are set even on responses
+ * produced by error handling further down the stack.
+ *
+ * The CSP below is a starting point and will break inline scripts in
+ * development. Deploy it as Content-Security-Policy-Report-Only first, read
+ * the violation reports, then enforce.
+ */
+import type { NextFunction, Request, Response } from 'express';
+
+const isDevelopment = process.env.NODE_ENV !== 'production';
+
+export function securityHeaders(_req: Request, res: Response, next: NextFunction): void {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+  res.setHeader('Permissions-Policy', 'camera=(), microphone=(), geolocation=()');
+
+  // HSTS only over TLS: announcing it on a plain HTTP dev server breaks
+  // localhost in some browsers.
+  if (!isDevelopment) {
+    res.setHeader('Strict-Transport-Security', 'max-age=63072000; includeSubDomains; preload');
+  }
+
+  const csp = [
+    "default-src 'self'",
+    // 'unsafe-inline' and 'unsafe-eval' are needed by most React setups. Replace
+    // them with nonces or hashes once the reports tell you what to allow.
+    "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+    "style-src 'self' 'unsafe-inline' https:",
+    "img-src 'self' data: blob: https:",
+    "font-src 'self' data:",
+    "connect-src 'self' https: wss:",
+    "frame-ancestors 'none'",
+    "base-uri 'self'",
+    "form-action 'self'",
+    "object-src 'none'",
+  ].join('; ');
+
+  if (isDevelopment) {
+    res.setHeader('Content-Security-Policy-Report-Only', csp);
+  } else {
+    res.setHeader('Content-Security-Policy', csp);
+  }
+
+  next();
+}
+
+// Wire up: app.use(securityHeaders);

@@ -1,0 +1,42 @@
+/** @type {import('next').NextConfig} */
+
+// Security headers applied to every route.
+//
+// Start with Content-Security-Policy-Report-Only, read the reports from
+// report-uri, then switch to enforcing. A CSP that breaks your app in
+// production is worse than no CSP, because nobody will debug it under time
+// pressure.
+const securityHeaders = [
+  { key: 'X-Content-Type-Options', value: 'nosniff' },
+  { key: 'X-Frame-Options', value: 'DENY' },
+  { key: 'Referrer-Policy', value: 'strict-origin-when-cross-origin' },
+  { key: 'Permissions-Policy', value: 'camera=(), microphone=(), geolocation=()' },
+  { key: 'Strict-Transport-Security', value: 'max-age=63072000; includeSubDomains; preload' },
+  {
+    key: 'Content-Security-Policy',
+    value: [
+      "default-src 'self'",
+      "script-src 'self' 'unsafe-inline' 'unsafe-eval' https:",
+      "style-src 'self' 'unsafe-inline' https:",
+      "img-src 'self' data: blob: https:",
+      "font-src 'self' data:",
+      "connect-src 'self' https: wss:",
+      "frame-ancestors 'none'",
+      "base-uri 'self'",
+      "form-action 'self'",
+      "object-src 'none'",
+    ].join('; '),
+  },
+];
+
+const nextConfig = {
+  async headers() {
+    return [{ source: '/:path*', headers: securityHeaders }];
+  },
+  experimental: {
+    // Required for Sentry's instrumentation hook (src/instrumentation.ts).
+    instrumentationHook: true,
+  },
+};
+
+module.exports = nextConfig;

@@ -1,0 +1,27 @@
+# Sentry initialisation for FastAPI.
+#
+# Initialise before your app is constructed so early failures are captured, and
+# set traces_sample_rate deliberately: 1.0 in development, ~0.2 in production.
+# Sampling at 1.0 in production is expensive and rarely worth it.
+
+import logging
+
+import sentry_sdk
+from sentry_sdk.integrations.fastapi import FastApiIntegration
+from sentry_sdk.integrations.logging import LoggingIntegration
+from sentry_sdk.integrations.sqlalchemy import SqlalchemyIntegration
+
+from app.config import settings
+
+sentry_sdk.init(
+    dsn=settings.sentry_dsn,
+    environment=settings.environment,
+    traces_sample_rate=1.0 if settings.debug else 0.2,
+    # Keep personal data out of error reports.
+    send_default_pii=False,
+    integrations=[
+        FastApiIntegration(),
+        SqlalchemyIntegration(),
+        LoggingIntegration(level=logging.INFO, event_level=logging.ERROR),
+    ],
+)

@@ -1,0 +1,204 @@
+id: shipready-declarative
+name: ShipReady Declarative Checks
+version: 0.1.0
+description: >-
+  Pattern-based checks expressed as data. Anything requiring real analysis
+  lives in TypeScript inside @shipready/core; this pack covers the checks that
+  are a single regular expression over source or configuration.
+author: ShipReady
+license: CC0-1.0
+requires: ">=0.1.0"
+
+rules:
+  # --- Security ---------------------------------------------------------
+  - id: house/security/php-display-errors
+    name: PHP display_errors enabled
+    description: >-
+      display_errors is on in a committed PHP configuration. Stack traces are
+      served to the browser, which hands an attacker file paths, class names
+      and occasionally query fragments.
+    remediation: >-
+      Set display_errors to Off in production php.ini and log errors instead.
+      Use `display_errors=Off` and `log_errors=On` in the deployed config.
+    category: security
+    severity: high
+    impact: degradation
+    confidence: 0.9
+    effortMinutes: 10
+    pattern: 'display_errors\s*=\s*(?:On|1|true)'
+    paths: ['\.php$', '\.ini$', 'Dockerfile', 'docker-compose']
+    compliance:
+      - framework: owasp-top-10
+        article: A05:2021
+        requirement: Security Misconfiguration
+
+  - id: house/security/django-debug-true
+    name: Django DEBUG is enabled
+    description: >-
+      DEBUG=True serves a full traceback with settings and environment values
+      to any visitor who triggers an error. It is also meaningfully slower.
+    remediation: >-
+      Set DEBUG = False and read ALLOWED_HOSTS and the secret key from the
+      environment. Fail startup if the secret key is the Django default.
+    category: security
+    severity: critical
+    impact: blocker
+    confidence: 0.95
+    effortMinutes: 15
+    pattern: '^\s*DEBUG\s*=\s*True'
+    paths: ['settings\.py$', 'settings/']
+    reportOnce: true
+    compliance:
+      - framework: owasp-top-10
+        article: A05:2021
+        requirement: Security Misconfiguration
+      - framework: iso-27001
+        article: A.8.25
+        requirement: Secure development life cycle
+
+  - id: house/security/flask-debug-run
+    name: Flask debug server used
+    description: >-
+      app.run(debug=True) runs the Werkzeug development server in production.
+      It has no concurrency model and prints an interactive debugger console
+      that is remote code execution.
+    remediation: >-
+      Serve with gunicorn or uvicorn, and keep debug=True behind an environment
+      check that cannot be true in production.
+    category: security
+    severity: critical
+    impact: blocker
+    confidence: 0.95
+    effortMinutes: 20
+    pattern: 'app\.run\s*\([^)]*debug\s*=\s*True'
+    paths: ['\.py$']
+    compliance:
+      - framework: owasp-top-10
+        article: A05:2021
+        requirement: Security Misconfiguration
+
+  - id: house/security/rails-skip-verify-ssl
+    name: TLS verification disabled
+    description: >-
+      SSL verification is turned off, so the client will accept any certificate
+      for any host. A proxy on the network path can read and rewrite traffic.
+    remediation: >-
+      Remove verify=False. For a self-signed certificate in development, install
+      the CA locally instead of disabling verification.
+    category: security
+    severity: high
+    impact: blocker
+    confidence: 0.9
+    effortMinutes: 15
+    pattern: '(?:verify\s*=\s*False|rejectUnauthorized:\s*false|InsecureSkipVerify:\s*true|verify_ssl\s*=\s*False)'
+    tags: [tls, network]
+    compliance:
+      - framework: owasp-top-10
+        article: A02:2021
+        requirement: Cryptographic Failures
+
+  # --- Deployment -------------------------------------------------------
+  - id: house/deployment/latest-tag
+    name: Container image pinned to a floating tag
+    description: >-
+      A Dockerfile uses :latest or no tag at all. The image contents change
+      without any change to your repository, so two builds from the same commit
+      are not the same artefact.
+    remediation: >-
+      Pin to a digest (FROM node:22.11.0-slim@sha256:...) or at minimum an
+      explicit patch version. Let Renovate or Dependabot bump it on a schedule.
+    category: deployment
+    severity: medium
+    impact: degradation
+    confidence: 0.85
+    effortMinutes: 15
+    pattern: '^\s*FROM\s+\S+:latest\s*(?:AS\s+\w+)?\s*$'
+    flags: im
+    paths: ['Dockerfile', 'docker-compose']
+    compliance:
+      - framework: iso-27001
+        article: A.8.25
+        requirement: Secure development life cycle
+
+  - id: house/deployment/root-user-container
+    name: Container runs as root
+    description: >-
+      No USER instruction, so the process runs as uid 0. A container escape or
+      any RCE inside the process is immediately root.
+    remediation: >-
+      Create an unprivileged user and switch to it with USER before the CMD.
+      `RUN adduser --system --disabled-password app && USER app`.
+    category: deployment
+    severity: medium
+    impact: degradation
+    confidence: 0.75
+    effortMinutes: 10
+    pattern: '^\s*FROM\s+\S+\s*(?:AS\s+\w+)?\s*$'
+    flags: im
+    paths: ['Dockerfile']
+    notPattern: '(?s)USER\s+\S'
+    reportOnce: true
+    compliance:
+      - framework: iso-27001
+        article: A.8.4
+        requirement: Access control to source code
+
+  # --- Performance ------------------------------------------------------
+  - id: house/performance/synchronous-await-loop
+    name: await inside a loop over a collection
+    description: >-
+      Requests are awaited one at a time inside a loop. Latency becomes
+      n times the per-item cost, which is how a "quick" batch job takes twenty
+      minutes and holds a connection the whole time.
+    remediation: >-
+      Use Promise.all / Promise.allSettled for independent work, or batch the
+      operation into a single query with an `in` clause.
+    category: performance
+    severity: medium
+    impact: degradation
+    confidence: 0.6
+    effortMinutes: 30
+    pattern: 'for\s*\((?:const|let|var)\s+\w+\s+of\s+[^)]+\)\s*\{[^}]*await\s'
+    tags: [n-plus-one, latency]
+
+  # --- AI-specific ------------------------------------------------------
+  - id: house/ai/max-tokens-missing-inline
+    name: Model call without an explicit token cap
+    description: >-
+      A model call sets no max_tokens. The provider default applies, and a
+      single adversarial input can consume it repeatedly at your expense.
+    remediation: >-
+      Set max_tokens explicitly and choose it deliberately: low for extraction
+      and classification, high only for generation tasks that need it.
+    category: ai-specific
+    severity: high
+    impact: blocker
+    confidence: 0.7
+    effortMinutes: 15
+    pattern: '(?:chat\.completions\.create|messages\.create|generateContent)\s*\((?:[^)]|\)(?!\s*[,)]))*\)'
+    tags: [ai-cost, bill-risk]
+    compliance:
+      - framework: owasp-llm-top-10
+        article: LLM10
+        requirement: Unbounded Consumption
+
+  - id: house/ai/raw-output-to-sql
+    name: Model output passed to a database call without validation
+    description: >-
+      A variable derived from a model response is used in a query call. Model
+      output is attacker-influenceable content and must be treated exactly
+      like form input.
+    remediation: >-
+      Parse the output against a schema and pass only the validated fields to
+      the database. Never interpolate a model response into a query string.
+    category: ai-specific
+    severity: critical
+    impact: blocker
+    confidence: 0.6
+    effortMinutes: 45
+    pattern: '(?:prisma|db|client)\.\w+\s*\(\s*\{[^}]*(?:message\.content|completion|response\.text|choices\[0\])'
+    tags: [ai-safety, output-validation]
+    compliance:
+      - framework: owasp-llm-top-10
+        article: LLM02
+        requirement: Insecure Output Handling

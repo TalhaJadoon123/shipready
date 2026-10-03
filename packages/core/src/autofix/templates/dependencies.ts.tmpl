@@ -1,0 +1,34 @@
+/**
+ * Dependency checks used by the readiness probe.
+ *
+ * Every check has a timeout. A readiness probe that itself hangs is worse than
+ * no probe: the orchestrator waits for it, times out, and eventually kills a
+ * healthy process.
+ */
+const CHECK_TIMEOUT_MS = 2_000;
+
+async function withTimeout<T>(fn: (signal: AbortSignal) => Promise<T>): Promise<T> {
+  return fn(AbortSignal.timeout(CHECK_TIMEOUT_MS));
+}
+
+export type CheckResult = 'ok' | 'error';
+
+export async function checkDependencies(): Promise<Record<string, CheckResult>> {
+  const checks: Record<string, CheckResult> = {};
+
+  try {
+    await withTimeout(async (signal) => {
+      const res = await fetch(process.env.DATABASE_URL ?? 'http://localhost:5432', { signal });
+      // Postgres speaks its own protocol, so any answer means the socket works.
+      if (res.status >= 500) throw new Error(`status ${res.status}`);
+    });
+    checks.database = 'ok';
+  } catch {
+    checks.database = 'error';
+  }
+
+  // Add your other dependencies here: cache, queue, object storage.
+  // checks.cache = await pingRedis() ? 'ok' : 'error';
+
+  return checks;
+}
