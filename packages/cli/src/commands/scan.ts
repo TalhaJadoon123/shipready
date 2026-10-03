@@ -75,7 +75,9 @@ export async function runScanCommand(options: ScanOptions): Promise<ScanOutcome>
   for (const message of loaded.warnings) warn(message);
   const config = mergeConfig(loaded.config, options);
 
-  setCoreColour(!options.quiet);
+  // Only *enable* colour when not quiet. Blindly setting it here would undo
+  // an earlier `--no-color`, because this command runs after argv parsing.
+  if (options.quiet) setCoreColour(false);
   if (!options.quiet) info(c.dim(`  Scanning ${c.bold(options.path)} ...`));
 
   const registry = createDefaultRegistry();
@@ -120,15 +122,21 @@ export async function runScanCommand(options: ScanOptions): Promise<ScanOutcome>
     }
   }
 
-  const output = options.output ? await resolveOutputFormat(options) : 'console';
-  const rendered = formatReport(report, output, {
+  // `--format` always wins: CI routinely writes SARIF to a file and still
+  // wants a readable summary in the log.
+  const rendered = formatReport(report, options.format, {
     verbose: options.verbose,
     full: options.full,
     maxFindings: options.maxFindings,
     maxBlockers: 3,
     toolName: 'ShipReady',
   });
-  await emit(rendered, options.output);
+  if (options.output && options.format !== 'console') {
+    await emit(rendered, options.output);
+  } else {
+    // No output file, or the caller wants the terminal report.
+    process.stdout.write(rendered);
+  }
 
   if (options.annotations) emitAnnotations(report);
 
@@ -155,12 +163,6 @@ function mergeConfig(base: ShipReadyConfig, options: ScanOptions): ShipReadyConf
   };
 }
 
-async function resolveOutputFormat(options: ScanOptions): Promise<ReportFormat> {
-  // An explicit --format always wins, so CI can ask for both SARIF on disk and
-  // a readable summary in the log.
-  return options.format;
-}
-
 /**
  * Exit code.
  *
@@ -171,13 +173,15 @@ async function resolveOutputFormat(options: ScanOptions): Promise<ReportFormat> 
 export function exitCodeFor(report: ProductionReadinessReport, config: ShipReadyConfig, options: ScanOptions): number {
   if (options.failOn === 'never') return 0;
 
+  // Counted from the findings, not the summary: the summary is derived, and
+  // two sources of truth for "is there a blocker" is one source too many.
   const blockers = report.findings.filter((f) => f.productionImpact === 'blocker');
 
   if (options.baseline) {
     const previous = report.comparison;
     if (!previous) return 0; // first run: nothing to regress against
     if (report.score < previous.previousScore) return 1;
-    if (report.comparison?.regressions.length) return 1;
+    if (previous.regressions.length > 0) return 1;
     return 0;
   }
 
@@ -386,7 +390,12 @@ export async function runReportCommand(options: ReportOptions): Promise<ScanOutc
     full: true,
     toolName: 'ShipReady',
   });
-  await emit(rendered, options.output);
+  if (options.output && options.format !== 'console') {
+    await emit(rendered, options.output);
+  } else {
+    // No output file, or the caller wants the terminal report.
+    process.stdout.write(rendered);
+  }
   return { report, exitCode: 0, written: options.output ?? null };
 }
 

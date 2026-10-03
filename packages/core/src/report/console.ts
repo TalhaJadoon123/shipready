@@ -14,6 +14,14 @@ export function setColour(enabled: boolean): void {
   colourEnabled = enabled && process.env.NO_COLOR === undefined;
 }
 
+/**
+ * Escape sequences always available for padding and stripping.
+ *
+ * Always `\u001b` regardless of whether colour is on, because the code that
+ * strips them must work on a string that already contains them.
+ */
+const ANSI_RE = /\u001b\[[0-9;]*m/g;
+
 export function isColour(): boolean {
   return colourEnabled;
 }
@@ -274,8 +282,7 @@ export function pad(s: string, n: number): string {
 }
 
 function stripAnsi(s: string): string {
-  // eslint-disable-next-line no-control-regex
-  return s.replace(/\u001b\[[0-9;]*m/g, '');
+  return s.replace(ANSI_RE, '');
 }
 
 export function wrapText(text: string, cols: number): string {

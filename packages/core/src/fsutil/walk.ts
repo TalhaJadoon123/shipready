@@ -23,7 +23,22 @@ export interface WalkResult {
   totalVisited: number;
 }
 
-const ALWAYS_SKIP = new Set(['.git', 'node_modules', '.next', '.turbo', 'dist', 'coverage']);
+/**
+ * Directories pruned before the ignore matcher sees them.
+ *
+ * `.shipready` is ours: scanning our own saved reports finds findings in our
+ * own JSON, which is both noise and a confusing first impression.
+ */
+const ALWAYS_SKIP = new Set([
+  '.git',
+  'node_modules',
+  '.next',
+  '.turbo',
+  'dist',
+  'coverage',
+  '.shipready',
+  '.cache',
+]);
 
 /**
  * Walk a directory tree, returning repo-relative POSIX paths.

@@ -57,7 +57,9 @@ ${indent(PIPELINE_SNIPPET.replace('${THRESHOLD}', String(options.threshold)))}`,
       });
     } else {
       const path = existing?.file ?? CI_TARGETS[0]!.file;
-      await writeFile(resolve(cwd, path), renderPipeline(options.threshold), 'utf8');
+      const abs = resolve(cwd, path);
+      await mkdir(dirname(abs), { recursive: true });
+      await writeFile(abs, renderPipeline(options.threshold), 'utf8');
       created.push({ path, reason: `${existing?.label ?? 'GitHub Actions'} workflow with a readiness gate` });
       if (!existing) {
         skipped.push({

@@ -73,6 +73,16 @@ export function parseConfig(text: string, path = '<inline>'): Omit<LoadedConfig,
     warnings.push(`${path} targets config version ${version}; this CLI understands ${DEFAULT_CONFIG.version}. Unknown keys are ignored.`);
   }
 
+  // A known section that is not a mapping means the user missed a colon. Saying
+  // nothing would leave them with a config that silently does nothing.
+  for (const section of ['scan', 'fix', 'observe', 'compliance'] as const) {
+    const value = raw[section];
+    if (value !== undefined && value !== null && !record(value)) {
+      warnings.push(`${path}: "${section}" must be a mapping of settings. The value was ignored.`);
+      delete raw[section];
+    }
+  }
+
   const scan = record(raw.scan);
   if (scan) {
     const threshold = number(scan.threshold);
@@ -230,7 +240,7 @@ function parseYamlCompat(text: string): unknown {
         map[key] = parts.join(rest === '>' ? ' ' : '\n');
         continue;
       }
-      map[key] = rest === '' ? parseBlock(lineIndent + 1) ?? null : scalar(rest);
+      map[key] = rest === '' ? (parseBlock(lineIndent + 1) ?? null) : scalar(rest);
     }
     return map;
   }
@@ -280,7 +290,11 @@ function scalar(raw: string): unknown {
 }
 
 function record(value: unknown): Record<string, unknown> | null {
-  return value && typeof value === 'object' && !Array.isArray(value) ? (value as Record<string, unknown>) : null;
+  return isPlainObject(value) ? (value as Record<string, unknown>) : null;
+}
+
+function isPlainObject(value: unknown): boolean {
+  return value !== null && typeof value === 'object' && !Array.isArray(value);
 }
 
 function number(value: unknown): number | undefined {

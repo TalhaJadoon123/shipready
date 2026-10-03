@@ -14,9 +14,9 @@
     },
     "./package.json": "./package.json"
   },
-  "files": ["dist", "README.md"],
+  "files": ["dist", "src/autofix/templates", "README.md"],
   "scripts": {
-    "build": "tsc -p tsconfig.build.json",
+    "build": "tsc -p tsconfig.build.json && node scripts/copy-assets.mjs",
     "dev": "tsc -p tsconfig.build.json --watch",
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "lint": "eslint src tests",

@@ -1,37 +1,20 @@
 import { spawn } from 'node:child_process';
-import { mkdirSync, writeFileSync } from 'node:fs';
+import { createHash } from 'node:crypto';
+import { estimateCost } from './pricing.js';
+import { humanUsd } from './util.js';
+import { existsSync, mkdirSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TraceRecorder } from './recorder.js';
 import { TraceStore } from './store.js';
 import { createRequire } from 'node:module';
-import type { ObserverOptions, Trace } from './types.js';
+import type { ObserverOptions, Trace, TraceEvent } from './types.js';
 
-/**
- * `shipready observe -- <command>`.
- *
- * The contract: one command, zero configuration, and it never gets in the way.
- *
- * How it works: the child process runs with `--require <preload>`, which patches
- * the boundaries it crosses. The parent reads the child's JSONL from stderr and
- * writes it to SQLite. Nothing is proxied, nothing is MITM'd, no certificate is
- * installed, and the agent runs at full speed.
- *
- * If the preload cannot be installed -- a non-Node agent, a shell script, a
- * statically linked binary -- the command still runs and still reports what it
- * can see from the parent (exit code, duration, output volume), and says so
- * plainly rather than pretending to have instrumented something.
- */
+const here = dirname(fileURLToPath(import.meta.url));
+
 export interface ObserveOptions extends Partial<ObserverOptions> {
   command: string;
-  dbPath?: string;
-  cwd?: string;
-  costBudget?: number;
-  costPerEvent?: number;
-  captureContent?: boolean;
-  jsonl?: boolean;
-  quiet?: boolean;
-  tui?: boolean;
+  /** Stop the child after this long. 0 disables. */
   timeoutMs?: number;
 }
 
@@ -47,52 +30,32 @@ export interface ObserveResult {
   durationMs: number;
 }
 
-const here = dirname(fileURLToPath(import.meta.url));
-
 /**
  * The preload module.
  *
- * Written as a self-contained CJS file with no imports beyond Node built-ins:
- * it runs before the agent's own code, so the fewer things that can fail here,
- * the better. It requires the built package lazily and swallows every error.
+ * Shipped as a checked-in CommonJS file rather than generated. It has to
+ * install its patches synchronously -- `node -e "process.exit(1)"` exits before
+ * an async dynamic import of an ESM module can resolve, so an agent that exits
+ * fastest would produce no trace at all. A real `.cjs` file, `require`d by
+ * `--require`, is the only form that guarantees synchronous installation.
+ *
+ * It carries no dependencies and writes one JSON line per event to stderr;
+ * all aggregation happens in the parent process.
  */
-const PRELOAD_SOURCE = `
-// ShipReady observer preload. Installed by \`shipready observe\`.
-// Patches http/https, fs and child_process to record agent behaviour.
-'use strict';
-const path = require('node:path');
-const { pathToFileURL } = require('node:url');
-
-let recorder = null;
-let options = {};
-
-async function boot() {
-  const entry = process.env.SHIPREADY_OBSERVER_ENTRY;
-  if (!entry) return;
-  try {
-    const mod = await import(pathToFileURL(entry).href);
-    options = JSON.parse(process.env.SHIPREADY_OBSERVER_OPTIONS || '{}');
-    mod.installRuntimeHooks({ ...options, command: process.argv.slice(2).join(' ') });
-    recorder = globalThis['shipready-observe-preload'].recorder;
-  } catch (error) {
-    // Failing to instrument must never stop the agent from running.
-    process.stderr.write(JSON.stringify({
-      type: 'shipready-observer-error',
-      message: error && error.message ? error.message : String(error),
-    }) + '\\n');
+function preloadPath(): string {
+  const candidates = [
+    // Running from source (ts, tests).
+    join(here, '..', 'preload.cjs'),
+    // Running from dist.
+    join(here, '..', '..', 'preload.cjs'),
+  ];
+  for (const candidate of candidates) {
+    if (existsSync(candidate)) return candidate;
   }
+  throw new Error(
+    'ShipReady observer preload not found. Reinstall @shipready/observer, or report this at https://github.com/shipreadyai/shipready/issues',
+  );
 }
-boot();
-`;
-
-function ensurePreload(): string {
-  const dir = join(here, '..', '.runtime');
-  mkdirSync(dir, { recursive: true });
-  const file = join(dir, 'preload.cjs');
-  writeFileSync(file, PRELOAD_SOURCE, 'utf8');
-  return file;
-}
-
 export async function observe(options: ObserveOptions): Promise<ObserveResult> {
   const cwd = options.cwd ?? process.cwd();
   const dbPath = options.dbPath ?? join(cwd, '.shipready', 'traces.db');
@@ -123,7 +86,7 @@ export async function observe(options: ObserveOptions): Promise<ObserveResult> {
     };
   }
 
-  const preload = ensurePreload();
+  const preload = preloadPath();
   const observerOptions: ObserverOptions = {
     dbPath,
     cwd,
@@ -132,11 +95,17 @@ export async function observe(options: ObserveOptions): Promise<ObserveResult> {
     ...(options.costPerEvent !== undefined ? { costPerEvent: options.costPerEvent } : {}),
     jsonl: true,
   };
+  // Budget alerting runs in the parent: the child has no recorder, so it cannot
+  // know the running total.
+  const costBudget = options.costBudget ?? 0;
 
-  const isNode = isNodeProgram(program);
+  // Two shapes reach here: `node script.js` (the first token is the runtime) and
+  // `script.js` (the first token is already a script). Only the former needs a
+  // Node binary in front, and only the latter needs the script re-attached.
+  const isNodeRuntime = isNodeProgram(program);
+  const isScript = !isNodeRuntime && isNodeScript(program);
   const childEnv: NodeJS.ProcessEnv = {
     ...process.env,
-    SHIPREADY_OBSERVER_ENTRY: join(here, 'index.js'),
     SHIPREADY_OBSERVER_OPTIONS: JSON.stringify({
       captureContent: observerOptions.captureContent ?? false,
       costBudget: observerOptions.costBudget ?? 0,
@@ -146,27 +115,36 @@ export async function observe(options: ObserveOptions): Promise<ObserveResult> {
     SHIPREADY_ACTIVE: '1',
   };
 
-  const nodeArgs = isNode
-    ? ['--require', preload, program, ...args]
-    : [program, ...args];
+  // Three shapes reach here:
+  //   `node agent.js`   the runtime is the first token; drop it, since the
+  //                    child is spawned as execPath already.
+  //   `agent.js`        a script invoked directly; Node has to run it.
+  //   `python x.py`     not Node at all, so no preload.
+  const childProgram = isNodeRuntime || isScript ? process.execPath : program!;
+  const childArgs =
+    isNodeRuntime || isScript ? ['--require', preload, ...(isScript ? [program!] : []), ...args] : [program!, ...args];
 
-  const childProgram = isNode ? process.execPath : program!;
   const started = Date.now();
 
   const { code, signal, stdout, stderr, traceLines } = await runChild(
     childProgram,
-    nodeArgs,
+    childArgs,
     childEnv,
     cwd,
     options.timeoutMs ?? 0,
   );
 
-  // Reconstruct the trace from the child's JSONL.
-  const trace = traceLines.length > 0 ? buildTraceFromLines(traceLines, commandLine, cwd, started) : null;
+  // Reconstruct the trace from the child's event stream. The id incorporates
+  // the start time and pid so two runs never collide in the database.
+  const traceId = `obs-${started.toString(36)}-${process.pid}`;
+  const trace =
+    traceLines.length > 0
+      ? buildTraceFromLines(traceLines, commandLine, cwd, started, traceId, costBudget ?? 0)
+      : null;
 
   let instrumented = false;
   let reason: string | undefined;
-  if (!isNode) {
+  if (!isNodeRuntime && !isScript) {
     reason = `${program} is not a Node program, so the filesystem, network and process hooks could not be installed. Run it under Node, or use the programmatic API for exact numbers.`;
   } else if (traceLines.length === 0) {
     const observerError = stderr.match(/"type":"shipready-observer-error","message":"([^"]*)"/);
@@ -210,7 +188,7 @@ function runChild(
   signal: NodeJS.Signals | null;
   stdout: string;
   stderr: string;
-  traceLines: unknown[];
+  traceLines: TraceEvent[];
 }> {
   return new Promise((resolve) => {
     const child = spawn(program, args, {
@@ -222,7 +200,7 @@ function runChild(
 
     let stdout = '';
     let stderr = '';
-    const traceLines: unknown[] = [];
+    const traceLines: TraceEvent[] = [];
     let timedOut = false;
 
     const timer =
@@ -244,21 +222,18 @@ function runChild(
       stderr += text;
       for (const line of text.split('\n')) {
         const trimmed = line.trim();
-        if (!trimmed.startsWith('{"type":"')) continue;
-        try {
-          const parsed = JSON.parse(trimmed) as Record<string, unknown>;
-          if (parsed.type === 'session' || parsed.type === 'llm' || parsed.type === 'tool' || parsed.type === 'network' || parsed.type === 'file' || parsed.type === 'decision' || parsed.type === 'error' || parsed.type === 'anomaly') {
-            traceLines.push(parsed);
-            continue;
-          }
-          if (parsed.type === 'trace') {
-            traceLines.push({ type: 'summary', summary: parsed.summary });
-            continue;
-          }
-        } catch {
-          // Not ours.
+        if (!trimmed.startsWith('{"kind":')) {
+          // The agent's own stderr: pass it through untouched.
+          if (trimmed !== '') process.stderr.write(`${line}\n`);
+          continue;
         }
-        process.stderr.write(`${line}\n`);
+        try {
+          traceLines.push(JSON.parse(trimmed) as TraceEvent);
+        } catch {
+          // Malformed observer line: do not pass it through as if it were the
+          // agent's output, because that would corrupt the trace stream.
+          process.stderr.write(`${line}\n`);
+        }
       }
     });
 
@@ -276,31 +251,33 @@ function runChild(
   });
 }
 
-/**
- * Rebuild a trace from the child's JSONL.
- *
- * The child emits finished events, not a trace object, because it has no
- * knowledge of the parent's intent. Assembling here keeps the preload small.
- */
 function buildTraceFromLines(
-  lines: readonly unknown[],
+  lines: readonly TraceEvent[],
   command: string,
   cwd: string,
   startedAt: number,
+  traceId: string,
+  costBudget: number,
 ): Trace | null {
   const events: Trace['events'] = [];
   const anomalies: Trace['summary']['anomalies'] = [];
 
+  // The preload emits events without ids; assign them here so replay and
+  // compare can reference a specific event across runs.
+  // `compare` can reference a specific event across runs.
   for (const line of lines) {
-    const record = line as Record<string, unknown>;
-    if (record.type === 'summary') {
-      const summary = record.summary as Trace['summary'];
-      for (const a of summary.anomalies ?? []) anomalies.push(a);
-      continue;
+    if (!line.id) {
+      const event = line as TraceEvent;
+      events.push({
+        ...event,
+        id: createHash('sha256')
+          .update([traceId, event.kind, event.seq, event.name].join(':'))
+          .digest('hex')
+          .slice(0, 32),
+      } as TraceEvent);
+    } else {
+      events.push(line);
     }
-    const { type, ...event } = record;
-    void type;
-    events.push({ ...(event as unknown as Trace['events'][number]) });
   }
 
   if (events.length === 0) return null;
@@ -336,25 +313,26 @@ function buildTraceFromLines(
   for (const event of events) {
     switch (event.kind) {
       case 'llm': {
+        const priced = priceEvent(event);
         summary.llmCalls++;
         summary.totalInputTokens += event.inputTokens;
         summary.totalOutputTokens += event.outputTokens;
         summary.totalCachedTokens += event.cachedInputTokens ?? 0;
-        summary.totalCostUsd += event.costUsd;
-        if (!event.costPriced) summary.costComplete = false;
+        summary.totalCostUsd += priced.usd;
+        if (!priced.priced) summary.costComplete = false;
         const key = event.model;
         const existing = summary.byModel[key] ?? {
           calls: 0,
           inputTokens: 0,
           outputTokens: 0,
           costUsd: 0,
-          priced: event.costPriced,
+          priced: priced.priced,
         };
         existing.calls++;
         existing.inputTokens += event.inputTokens;
         existing.outputTokens += event.outputTokens;
-        existing.costUsd = round(existing.costUsd + event.costUsd, 6);
-        existing.priced = existing.priced && event.costPriced;
+        existing.costUsd = round(existing.costUsd + priced.usd, 6);
+        existing.priced = existing.priced && priced.priced;
         summary.byModel[key] = existing;
         break;
       }
@@ -383,6 +361,19 @@ function buildTraceFromLines(
   summary.toolDistribution = toolCounts;
   summary.hosts = [...hosts];
   summary.totalCostUsd = round(summary.totalCostUsd, 6);
+
+  // One alert when the trace crosses its budget. Firing per call would bury
+  // the signal in noise, and the point is that someone should stop the run.
+  if (costBudget > 0 && summary.totalCostUsd > costBudget && !anomalies.some((a) => a.kind === 'cost-spike')) {
+    anomalies.push({
+      kind: 'cost-spike',
+      severity: 'critical',
+      message: `Trace cost ${humanUsd(summary.totalCostUsd)} has crossed the ${humanUsd(costBudget)} budget`,
+      ts: new Date().toISOString(),
+      detail: { costUsd: summary.totalCostUsd, budget: costBudget, budgetBreached: true },
+    });
+  }
+  summary.anomalies = [...anomalies];
 
   return { summary, events, version: 1 };
 }
@@ -420,11 +411,9 @@ export function parseCommand(input: string): string[] {
 
   for (let i = 0; i < input.length; i++) {
     const ch = input[i]!;
-    if (ch === '\\' && quote !== "'" && i + 1 < input.length) {
-      current += input[++i];
-      started = true;
-      continue;
-    }
+    // Backslash is NOT an escape character here. Every agent command anyone
+    // types on Windows contains a backslash path, and treating `\U` as `U`
+    // silently produces "Cannot find module C:Users...".
     if (quote) {
       if (ch === quote) quote = null;
       else current += ch;
@@ -448,14 +437,35 @@ export function parseCommand(input: string): string[] {
   return argv;
 }
 
-function isNodeProgram(program: string): boolean {
-  const base = program.toLowerCase();
-  if (base === 'node' || base === 'nodejs' || base.endsWith('\\node.exe') || base.endsWith('/node')) return true;
-  if (base.endsWith('.js') || base.endsWith('.mjs') || base.endsWith('.cjs')) return true;
-  if (base.endsWith('.ts')) return true;
-  return false;
+/** True for a path or bare name that Node would run directly. */
+function isNodeScript(program: string): boolean {
+  return /\\.(m|c)?js$/i.test(program) || /\\.ts$/i.test(program);
 }
 
+function isNodeProgram(program: string): boolean {
+  const base = program.toLowerCase();
+  // Only the runtime name. Returning true for a `.js` path here would make the
+  // caller treat the script as the binary and pass it to `execPath` twice.
+  return base === 'node' || base === 'nodejs' || base.endsWith('\\node.exe') || base.endsWith('/node');
+}
+
+/**
+ * Price one model call.
+ *
+ * The preload is a sensor and deliberately carries no price catalogue, so
+ * every cost is computed here. Events that arrive already priced (from the
+ * programmatic `TraceRecorder`) are respected rather than recomputed.
+ */
+function priceEvent(event: Extract<TraceEvent, { kind: 'llm' }>): { usd: number; priced: boolean } {
+  if (typeof event.costUsd === 'number' && typeof event.costPriced === 'boolean') {
+    return { usd: event.costUsd, priced: event.costPriced };
+  }
+  return estimateCost(event.model, {
+    inputTokens: event.inputTokens,
+    outputTokens: event.outputTokens,
+    ...(event.cachedInputTokens !== undefined ? { cachedInputTokens: event.cachedInputTokens } : {}),
+  });
+}
 function round(n: number, places: number): number {
   const f = 10 ** places;
   return Math.round(n * f) / f;
