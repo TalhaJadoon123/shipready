@@ -7,6 +7,21 @@ import type { ScanContext } from '../../types.js';
 
 const ORMS = ['prisma', 'drizzle-orm', 'typeorm', 'sequelize', 'mongoose', 'knex', 'sqlalchemy', 'django', 'sqlmodel', 'tortoise-orm', 'mikro-orm', 'kysely', 'obj'];
 
+/**
+ * Whether an installed dependency is one of these ORMs.
+ *
+ * Matching is by substring rather than set membership because the package name
+ * is not always the framework name: Prisma installs as `@prisma/client`, which
+ * does not contain the string `prisma` as a set member test would require, and
+ * `@prisma/client` is the only Prisma package most projects install.
+ */
+function hasOrmDependency(ctx: ScanContext): boolean {
+  const names = [...ctx.project.dependencyNames];
+  return ORMS.some((orm) =>
+    names.some((n) => n === orm || n === `@${orm}/client` || n.includes(`${orm}-orm`) || n === `@prisma/${orm}`),
+  );
+}
+
 export const databaseRules: Rule[] = [
   defineRule(
     {
@@ -183,6 +198,12 @@ export const databaseRules: Rule[] = [
       if (!usesDatabase(ctx)) return;
       for (const file of filesWithExts(ctx, ...JS_EXTS, '.py')) {
         if (/(^|\/)(test|tests|__tests__|fixtures|seed|scripts?)\//.test(file.path)) continue;
+        // Per-file gate as well as the project-wide one. A monorepo can contain
+        // a database service and a pure library, and `.get(`/`.create(`/`.select`
+        // are extremely common method names outside an ORM: a Zod schema walker,
+        // a Map wrapper, a builder. Without this, one project-wide `pg.` match
+        // makes every unrelated file look like it has query problems.
+        if (!fileTouchesDatabase(ctx, file)) continue;
         const lines = file.lines;
         for (let i = 0; i < lines.length; i++) {
           const code = file.lineNoComments(i + 1);
@@ -197,7 +218,7 @@ export const databaseRules: Rule[] = [
             if (inner === '') continue;
             const innerIndent = indentOfLine(lines[j]!);
             if (innerIndent <= depth && /\}/.test(inner)) break;
-            if (/\.(findUnique|findFirst|findMany|findById|get|query|execute|select|fetchOne|fetchAll|aggregate|count|save|create|update|delete)\s*\(/.test(inner)) {
+            if (looksLikeDbCall(inner)) {
               if (queries === 0) {
                 firstQueryLine = j + 1;
                 firstQueryText = file.line(j + 1);
@@ -244,6 +265,7 @@ export const databaseRules: Rule[] = [
       if (hasTransactions(ctx)) return;
       for (const file of filesWithExts(ctx, ...SERVER_EXTS, '.py')) {
         if (/(^|\/)(test|tests|fixtures|seed|scripts?)\//.test(file.path)) continue;
+        if (!fileTouchesDatabase(ctx, file)) continue;
         const lines = file.lines;
         for (let i = 0; i < lines.length; i++) {
           const code = file.lineNoComments(i + 1);
@@ -257,7 +279,7 @@ export const databaseRules: Rule[] = [
             if (ind <= baseIndent && /^(\}|def |function|export )/.test(raw.trim())) break;
             const inner = file.lineNoComments(j + 1);
             const kind =
-              /\.(create|createMany|insert|insertMany|update|updateMany|upsert|delete|deleteMany|save|insertOne|updateOne)\s*\(/.exec(inner)?.[1] ??
+              looksLikeWrite(inner) ??
               /\b(INSERT\s+INTO|UPDATE\s+\w+\s+SET|DELETE\s+FROM)\b/i.exec(inner)?.[1];
             if (kind) writes.push({ line: j + 1, text: file.line(j + 1), kind });
             if (writes.length >= 3) break;
@@ -298,15 +320,16 @@ export const databaseRules: Rule[] = [
     function* (ctx, emit) {
       if (!usesDatabase(ctx)) return;
       for (const file of filesWithExts(ctx, ...SERVER_EXTS, '.py')) {
+        // Same per-file gate as n-plus-one: `all`, `list` and `search` are
+        // ordinary names on ordinary objects.
+        if (!fileTouchesDatabase(ctx, file)) continue;
         for (let line = 1; line <= file.lineCount; line++) {
           const code = file.lineNoComments(line);
-          const hit = /\.(findMany|findAll|all|select|list|search|query)\s*\(/.exec(code);
+          const hit = UNBOUNDED_VERBS.exec(code);
           if (!hit) continue;
           // `matchCode` reports offsets from the masked text; the masked text
           // has the same length as the original, so the offset is valid in both.
-          const maskHit = file.matchCode(/\.(?:findMany|findAll|all|select|list|search|query)\s*\(/, file.noComments).find(
-            (m) => m.line === line,
-          );
+          const maskHit = file.matchCode(UNBOUNDED_VERBS, file.noComments).find((m) => m.line === line);
           const block = maskHit ? file.windowAround(maskHit.index, 400) : '';
           if (/\b(take|limit|LIMIT|per_page|pageSize|first|cursor|skip|offset|head)\b/.test(block)) continue;
           if (/(^|\/)(test|tests|fixtures|seed|scripts?)\//.test(file.path)) continue;
@@ -412,16 +435,114 @@ function escapeRegExp(s: string): string {
   return s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 }
 
+/**
+ * Whether this project talks to a database at all.
+ *
+ * The `pg` alternative is anchored (`\bpg\.`) on purpose. A bare `\bpg\b` matches
+ * any `.pg(` or `pg.` namespace call, which turned a schema library with no
+ * database anywhere into a project that had one -- and then every DB rule below
+ * fired across the whole codebase. A false "this project has no database" is
+ * cheap; a false "it does" makes the scanner confidently wrong at scale.
+ */
+/** Import-level evidence that one file actually talks to a database. */
+function fileTouchesDatabase(ctx: ScanContext, file: { content: string }): boolean {
+  const hasOrm = file.content.match(
+    /from\s+['"](@prisma\/client|prisma|@supabase\/supabase-js|drizzle-orm|sequelize|typeorm|knex|mongoose|pg|psycopg|better-sqlite3|mysql2|sqlite3)['"]/,
+  );
+  if (hasOrm) return true;
+
+  // Everything below needs the project to actually depend on an ORM, so a stray
+  // `.findMany(` in a library cannot opt itself in.
+  if (!hasOrmDependency(ctx)) return false;
+
+  // A client instance held in a variable: `const db = new PrismaClient()`,
+  // `pool.query(...)`, `db.$queryRaw`.
+  if (/new\s+(PrismaClient|Pool|Client|Database)\s*\(/.test(file.content)) return true;
+  if (/\b(prisma|db|pool|session|client|conn|connection)\s*\.\s*(query|execute|\$queryRaw|\$executeRaw|user|session|model|table|schema)\b/.test(file.content)) {
+    return true;
+  }
+  // The ORM is installed and the file calls its distinctive methods on some
+  // receiver. This is what a global or singleton client looks like --
+  // `prisma.user.findUnique(...)` with no import in sight, which is how Prisma
+  // projects are usually written.
+  return ORM_VERBS_ALONE.test(file.content);
+}
+
+/**
+ * A call that looks like a database query.
+ *
+ * Every verb here is also an ordinary method name, so the receiver matters:
+ * `findMany`, `$queryRaw` and `aggregate` are specific enough to stand alone,
+ * while `get`, `create`, `select`, `count` and `delete` only count on something
+ * that is recognisably a database handle. Matching bare `.create(` reported a
+ * Zod schema builder as an N+1 across eight findings in one file.
+ */
+const ORM_VERBS_ALONE =
+  /\.\s*(findUnique|findFirst|findMany|findById|findOrCreate|upsert|\$queryRaw|\$executeRaw|aggregate|groupBy|createMany|deleteMany|updateMany)\s*\(/;
+const ORM_VERBS_WITH_RECEIVER =
+  /\b(prisma|db|database|client|conn|connection|pool|session|tx|sql|query|orm|repo|repository|collection|table|model|schema|ctx|em)\s*\.\s*(get|find|findOne|findById|create|insert|save|update|delete|remove|select|query|execute|count|exists|upsert|first|where|orderBy|include|limit|offset)\s*\(/;
+const SQL_LITERAL = /\.\s*(query|execute|raw|unsafe)\s*\(\s*[`'"]/;
+
+function looksLikeDbCall(line: string): boolean {
+  return ORM_VERBS_ALONE.test(line) || ORM_VERBS_WITH_RECEIVER.test(line) || SQL_LITERAL.test(line);
+}
+
+/**
+ * A write, for the transaction rule.
+ *
+ * `createMany`/`insertMany`/`deleteMany`/`upsert` are specific enough to stand
+ * alone. Plain `create`, `insert`, `update`, `delete` and `save` are ordinary
+ * method names on ordinary objects -- `ZodOptional.create`, a Map wrapper, a
+ * repository of in-memory records -- so they only count on a database receiver.
+ */
+const WRITE_VERBS_ALONE =
+  /\.\s*(createMany|insertMany|updateMany|deleteMany|insertOne|updateOne|replaceOne|bulkWrite|saveMany)\s*\(/;
+const WRITE_VERBS_WITH_RECEIVER =
+  /\b(?:prisma|db|database|client|conn|connection|pool|session|tx|sql|orm|repo|repository|collection|table|model|ctx|em|dao)\s*\.\s*(?:create|insert|update|delete|remove|save|upsert|put|add|set)\s*\(/;
+
+/** The write verb for the evidence line, or null if this is not a write. */
+function looksLikeWrite(line: string): string | null {
+  if (WRITE_VERBS_ALONE.test(line)) return WRITE_VERBS_ALONE.exec(line)![1]!;
+  if (WRITE_VERBS_WITH_RECEIVER.test(line)) return WRITE_VERBS_WITH_RECEIVER.exec(line)![1]!;
+  return null;
+}
+
+/**
+ * A list call that returns everything.
+ *
+ * `findMany`/`findAll`/`query` are specific to data access. `all`, `select`,
+ * `list` and `search` are not -- `Object.keys().all()`, a `<select>` builder,
+ * an in-memory `.search()` all match -- so those need a database receiver too.
+ */
+const UNBOUNDED_VERBS =
+  /\.\s*(?:findMany|findAll|query)\s*\(|\b(?:prisma|db|database|client|conn|connection|pool|session|tx|sql|orm|repo|repository|collection|table|model|ctx|em)\s*\.\s*(?:all|select|list|search|find|findMany)\s*\(/;
+
 function usesDatabase(ctx: ScanContext): boolean {
   if (ORMS.some((o) => ctx.project.dependencyNames.has(o) || ctx.project.frameworks.includes(o))) return true;
   if (ctx.project.type === 'django') return true;
-  return allFiles(ctx).some((f) =>
-    /prisma\.|\bpg\b|sequelize|typeorm|drizzle|knex|mongoose|sqlalchemy|psycopg|sqlite3|mysql2|createPool|new Pool\(|DATABASE_URL/.test(f.content),
-  );
+  if (ctx.project.dependencyNames.has('pg') || ctx.project.dependencyNames.has('better-sqlite3')) return true;
+  if (hasOrmDependency(ctx)) return true;
+  // Source files only. Prose mentions databases constantly -- a docs page
+  // linking to `drizzle-zod`, a README saying "DATABASE_URL", a scanner's own
+  // remediation text quoted inside a saved report -- and counting any of those
+  // makes a library with no database look like a service that has one. Once
+  // that misfires, every database rule fires across the whole repository.
+  return allFiles(ctx)
+    .filter((f) => /\.(ts|tsx|js|jsx|mjs|cjs|py|rb|go|java|kt|php|cs|rs|sql|prisma)$/.test(f.path))
+    .some((f) =>
+      /prisma\.|@prisma\/client|\bpg\.|sequelize|typeorm|drizzle-orm|drizzle\b.*from|knex|mongoose|sqlalchemy|psycopg|sqlite3|mysql2|createPool|new Pool\(|DATABASE_URL/.test(
+        f.content,
+      ),
+    );
 }
 
 function ormNames(ctx: ScanContext): string[] {
-  return ORMS.filter((o) => ctx.project.dependencyNames.has(o) || ctx.project.frameworks.includes(o));
+  const names = [...ctx.project.dependencyNames];
+  return ORMS.filter(
+    (o) =>
+      ctx.project.frameworks.includes(o) ||
+      names.some((n) => n === o || n === `@${o}/client` || n.includes(`${o}-orm`) || n === `@prisma/${o}`),
+  );
 }
 
 function hasMigrations(ctx: ScanContext): boolean {

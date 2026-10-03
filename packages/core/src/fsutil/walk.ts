@@ -76,6 +76,20 @@ const DEFAULT_EXCLUDED_PATTERNS: readonly RegExp[] = [
   /\.tmpl$/,
   /\.snap$/,
   /\/(rules|catalogue)\/.*\.(ya?ml)$/,
+  // Agent instruction and prompt directories. A `.claude/skills/*.md` file
+  // *describes* SQL and migration tools in prose, and prose about databases is
+  // indistinguishable from code that uses one -- a repository with no database
+  // at all was reported as missing migrations and connection pooling. These are
+  // documentation that happens to be loaded by a tool.
+  /(^|\/)\.(claude|agent|agents|cursor|aider|codex|windsurf|continue)(\/|$)/,
+  /(^|\/)(prompts?|instructions?)(\/|$)/,
+  // Agent skill/command definitions.
+  /\/(skills?|commands?)(\/|$)/,
+  // ShipReady's own saved reports. Each one quotes the scanner's remediation
+  // text -- which names DATABASE_URL, Prisma, drizzle and friends -- so scanning
+  // a repository ShipReady has already scanned made the next run believe that
+  // repository uses a database. The scanner was reading its own output.
+  /(^|\/)\.shipready(\/|$)/,
   // The scanner's own rule definitions. Every rule necessarily quotes the
   // vulnerability it detects -- in its description, its remediation and its test
   // patterns -- so a scanner that reads its own catalogue reports itself as

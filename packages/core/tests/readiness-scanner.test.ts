@@ -203,6 +203,141 @@ describe('database checks', () => {
     expect(ruleIds(ready).has('readiness/database/no-migration-system')).toBe(false);
   });
 
+  /**
+   * False positives, each of which shipped and was caught by scanning a real
+   * open-source library. They are worth pinning because the failure mode is
+   * silent: the report is confident, the paths are real, and every finding is
+   * wrong.
+   */
+  describe('does not mistake ordinary code for database code', () => {
+    /** A library with no database anywhere, and no ORM dependency. */
+    async function scanLibrary(files: { path: string; content: string }[]): Promise<ProductionReadinessReport> {
+      const root = await makeRepo({
+        name: 'lib',
+        files: [{ path: 'package.json', content: '{"name":"lib","dependencies":{"zod":"3.0.0"}}' }, ...files],
+      });
+      try {
+        return await scan(root);
+      } finally {
+        await removeRepo(root);
+      }
+    }
+
+    it('does not report N+1 for a schema walker that calls .create() in a loop', async () => {
+      // This is zod's `deepPartialify`, near enough. `ZodOptional.create(...)`
+      // inside a `for...in` is not a database round trip.
+      const report = await scanLibrary([
+        {
+          path: 'src/walker.ts',
+          content: [
+            'export function partialify(schema: any): any {',
+            '  const shape: any = {};',
+            '  for (const key in schema.shape) {',
+            '    shape[key] = Optional.create(partialify(schema.shape[key]));',
+            '  }',
+            '  return new ZodObject(shape);',
+            '}',
+          ].join('\n'),
+        },
+      ]);
+
+      expect(findingsFor(report, 'readiness/database/n-plus-one')).toHaveLength(0);
+      expect(findingsFor(report, 'readiness/database/unbounded-query')).toHaveLength(0);
+      expect(findingsFor(report, 'readiness/database/no-transaction')).toHaveLength(0);
+    });
+
+    it('does not treat prose about ORMs as evidence of a database', async () => {
+      // A docs page that links to drizzle-zod, and a README that mentions
+      // DATABASE_URL, are the two most common ways a library looks like a
+      // database service. Both are text, not code.
+      const report = await scanLibrary([
+        {
+          path: 'docs/ecosystem.md',
+          content: 'Works with drizzle-zod, @prisma/client, sequelize and mongoose. Set DATABASE_URL first.',
+        },
+        { path: 'README.md', content: 'Run with DATABASE_URL=postgres://localhost/app' },
+      ]);
+
+      expect(ruleIds(report).has('readiness/database/no-migration-system')).toBe(false);
+      expect(ruleIds(report).has('readiness/database/no-connection-pooling')).toBe(false);
+    });
+
+    it('does not treat a .pg namespace call as the pg driver', async () => {
+      // `pg.` is a namespace on a plugin object here, not the node-postgres
+      // client. A bare `\bpg\b` matched it and unlocked every database rule.
+      const report = await scanLibrary([
+        { path: 'src/plugin.ts', content: ['export class P {', '  pg = { load: (n: string) => n };', '}'].join('\n') },
+      ]);
+
+      expect(ruleIds(report).has('readiness/database/no-migration-system')).toBe(false);
+    });
+
+    it('does not read its own saved report as evidence', async () => {
+      // Each saved report quotes the remediation text, which names DATABASE_URL
+      // and Prisma. Scanning a repo ShipReady had already scanned made the next
+      // run believe that repo used a database.
+      const report = await scanLibrary([
+        {
+          path: '.shipready/last-scan.json',
+          content: JSON.stringify({
+            findings: [
+              {
+                ruleId: 'readiness/database/no-migration-system',
+                remediation: 'Adopt prisma migrate or set DATABASE_URL.',
+              },
+            ],
+          }),
+        },
+      ]);
+
+      expect(ruleIds(report).has('readiness/database/no-migration-system')).toBe(false);
+      expect(ruleIds(report).has('readiness/database/no-connection-pooling')).toBe(false);
+    });
+
+    it('does not scan agent instruction files for code smells', async () => {
+      // `.claude/skills/*/SKILL.md` describes SQL and migrations in prose, and
+      // prose about databases reads exactly like code that uses one.
+      const report = await scanLibrary([
+        {
+          path: '.claude/skills/security-advisory/SKILL.md',
+          content:
+            'If the app uses a SQL database with no migrations, use `prisma migrate`. See `DATABASE_URL` and pool settings.',
+        },
+      ]);
+
+      expect(ruleIds(report).has('readiness/database/no-migration-system')).toBe(false);
+      expect(ruleIds(report).has('readiness/database/no-connection-pooling')).toBe(false);
+    });
+  });
+
+  it('still detects N+1 through a global Prisma client with no import', async () => {
+    // The tightening must not cost real detections. This is the common way a
+    // Prisma project is written: the client is a singleton, not an import.
+    const root = await makeRepo({
+      name: 'globalclient',
+      files: [
+        { path: 'package.json', content: '{"name":"x","dependencies":{"@prisma/client":"5.0.0"}}' },
+        {
+          path: 'src/report.ts',
+          content: [
+            'export async function build(userIds: string[]) {',
+            '  const out = [];',
+            '  for (const id of userIds) {',
+            '    out.push(await prisma.user.findUnique({ where: { id } }));',
+            '  }',
+            '  return out;',
+            '}',
+          ].join('\n'),
+        },
+      ],
+    });
+    try {
+      expect(findingsFor(await scan(root), 'readiness/database/n-plus-one').length).toBeGreaterThan(0);
+    } finally {
+      await removeRepo(root);
+    }
+  });
+
   it('does not report an indexed foreign key', () => {
     // The production-ready schema declares @@index on every relation column.
     expect(findingsFor(ready, 'readiness/database/missing-foreign-key-index')).toHaveLength(0);
