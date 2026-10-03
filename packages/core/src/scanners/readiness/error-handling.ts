@@ -91,13 +91,16 @@ export const errorHandlingRules: Rule[] = [
           const code = file.lineNoComments(line).replace(/\/\*.*?\*\//g, '');
           if (code === '') continue;
 
-          // `.then()` with no `.catch()` in the same expression: a rejection
-          // has nowhere to go.
+          // `.then()` with no `.catch()`: a rejection has nowhere to go, *unless*
+          // the promise is returned (the caller handles it) or the chain is
+          // continued on a later line.
           const thenHit = /\.then\s*\(/.exec(code);
-          if (thenHit && !/\.catch\s*\(/g.test(code) && !/\.catch\s*\(\s*$/.test(file.line(line).trim())) {
-            // A `.then(onOk, onErr)` form handles rejection inline.
-            const hasSecondArg = /\)\s*,\s*(?:\(?\s*(?:err|error|e)\b|\w+\s*=>)/.test(code.slice(thenHit.index));
-            if (!hasSecondArg) {
+          if (thenHit && !/\.catch\s*\(|,\s*(?:\(?\s*(?:err|error|e)\b|\w+\s*=>)/.test(code.slice(thenHit.index))) {
+            // A returned promise is handled by whoever awaited the caller.
+            const propagated = /\breturn\b/.test(code) || /\bawait\b/.test(code);
+            // A chain split across lines has its handler somewhere below.
+            const continuesBelow = chainHasHandlerBelow(file, line);
+            if (!propagated && !continuesBelow) {
               yield emit({
                 path: file.path,
                 line,
@@ -504,6 +507,31 @@ function isServerless(ctx: ScanContext): boolean {
   if (ctx.project.frameworks.includes('vercel') || ctx.project.frameworks.includes('cloudflare')) return true;
   if (['@vercel/node', '@netlify/functions', 'serverless-http', '@aws-lambda'].some((d) => ctx.project.dependencyNames.has(d))) return true;
   return ctx.files().some((f) => /^(vercel\.json|netlify\.toml|serverless\.ya?ml|template\.ya?ml|app\.yaml)$/.test(f));
+}
+
+/**
+ * True when a `.then(` on `line` has its `.catch(` or second argument a few
+ * lines below, at the same indentation.
+ *
+ * Chained promises are conventionally written across lines:
+ *   result
+ *     .then(a)
+ *     .catch(b)
+ * A line-only check reports every one of them as unhandled, which is the
+ * difference between a useful rule and one people disable.
+ */
+function chainHasHandlerBelow(file: SourceFile, line: number): boolean {
+  const indent = (file.line(line).match(/^\s*/)?.[0].length ?? 0);
+  for (let l = line + 1; l <= Math.min(file.lineCount, line + 6); l++) {
+    const text = file.line(l);
+    if (text === '') continue;
+    const nextIndent = text.match(/^\s*/)?.[0].length ?? 0;
+    if (nextIndent < indent) break;
+    if (/\.(catch|finally)\s*\(/.test(text)) return true;
+    // A new statement at this indentation ends the chain.
+    if (nextIndent === indent && !/^\s*\./.test(text) && !/^\s*\)/.test(text)) break;
+  }
+  return false;
 }
 
 function hasHttpServer(ctx: ScanContext): boolean {

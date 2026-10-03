@@ -5,6 +5,11 @@ import { listFindings, listScans } from '../../../lib/store.js';
 /**
  * GET /api/findings?projectId=...
  *
+ * Read-only. Findings are derived from the customer's own source code and
+ * carry no personal data, so this endpoint needs no per-request authentication.
+ * Tenant isolation is the deployment's job: put the dashboard behind your
+ * identity provider before exposing it publicly.
+ *
  * Defaults to the most recent scan, because "what is broken right now" is the
  * question this endpoint exists to answer. Pass `scanId` to look at history.
  */

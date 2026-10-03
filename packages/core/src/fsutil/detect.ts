@@ -1,7 +1,6 @@
 import { type ProjectType, type ProjectProfile } from '../types.js';
 import { countLines, languageOf } from '../source.js';
-import { pathExists, readText } from './walk.js';
-import { isDirectory } from './walk.js';
+import { isDirectory, pathExists, readText } from './walk.js';
 import { join, resolve } from 'node:path';
 
 /**
@@ -113,7 +112,7 @@ export async function detectProject(
   addIf('@testing-library/react', 'testing-library');
 
   const packageManager = detectPackageManager(files);
-  const hasTests = detectTests(files, dependencyNames);
+  const hasTests = await detectTests(root, files, dependencyNames);
   const hasCi = await detectCi(root, files, hasDir);
   const hasDocker = files.some(
     (f) => /(^|\/)(dockerfile[^/]*|\.dockerignore)$/i.test(f) || /docker-compose[^/]*\.ya?ml$/.test(f),
@@ -225,17 +224,45 @@ function detectPackageManager(files: readonly string[]): ProjectProfile['package
   return 'unknown';
 }
 
-function detectTests(files: readonly string[], deps: Set<string>): boolean {
+/**
+ * Detect whether the project has tests.
+ *
+ * Reads the directory rather than the walked file list: test files are excluded
+ * from scanning by default, so relying on the walk made every project look
+ * untested. That is not a cosmetic bug -- it turns "you have tests" into a
+ * high-severity finding on every repository.
+ */
+async function detectTests(
+  root: string,
+  files: readonly string[],
+  deps: Set<string>,
+): Promise<boolean> {
   if (deps.has('vitest') || deps.has('jest') || deps.has('mocha')) return true;
-  return files.some(
-    (f) =>
-      /\.(test|spec)\.[cm]?[jt]sx?$/.test(f) ||
-      /^tests?\//.test(f) ||
-      /(?:^|\/)test_[^/]+\.py$/.test(f) ||
-      /_test\.(go|py|rs)$/.test(f) ||
-      /(^|\/)tests?\/[^/]+\.go$/.test(f) ||
-      /(^|\/)spec\/[^/]+_spec\.rb$/.test(f),
-  );
+  if (deps.has('playwright') || deps.has('cypress') || deps.has('pytest')) return true;
+  if (deps.has('unittest') || deps.has('nose')) return true;
+
+  // A test script in package.json is evidence on its own.
+  const pkg = files.find((f) => f === 'package.json');
+  if (pkg) {
+    try {
+      const parsed = JSON.parse(await readText(join(root, 'package.json')) ?? '{}') as {
+        scripts?: Record<string, string>;
+      };
+      const scripts = Object.keys(parsed.scripts ?? {}).join(' ');
+      if (/\b(test|jest|vitest|mocha)\b/.test(scripts)) return true;
+    } catch {
+      // A malformed package.json is the deploy rule's problem, not this one.
+    }
+  }
+
+  const dirs = ['tests', 'test', '__tests__', 'spec'];
+  for (const dir of dirs) {
+    if (await isDirectory(join(root, dir))) return true;
+  }
+  for (const file of ['pytest.ini', 'tox.ini', 'jest.config.js', 'vitest.config.ts', 'jest.config.ts', 'phpunit.xml', 'karma.conf.js']) {
+    if (files.includes(file)) return true;
+  }
+  return false;
 }
 
 async function detectCi(

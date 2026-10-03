@@ -154,10 +154,20 @@ export const securityRules: Rule[] = [
     },
     function* (ctx, emit) {
       for (const file of filesWithExts(ctx, ...SERVER_EXTS, '.py', '.go', '.rb', '.php')) {
-        for (const hit of file.matchNoComments(
+        // String-masked, so a wildcard quoted inside prose is not a
+        // misconfiguration. Matching raw text made this rule report its own
+        // remediation string.
+        for (const hit of file.matchCode(
           /(?:Access-Control-Allow-Origin["'\s]*[:,]\s*|origin\s*:\s*|allow_origins\s*=\s*)["']?\*|origin\s*:\s*true|allow_origins\s*=\s*\[\s*["']\*["']\s*\]/g,
         )) {
-          const permissiveCredentials = /credentials\s*:\s*true|allow_credentials\s*=\s*True/.test(file.content);
+          // A wildcard mentioned in prose -- a remediation string, a doc comment -- is
+          // not a misconfiguration. Require it to be an actual value.
+          const line = file.lineNoComments(hit.line);
+          if (!/(?:=|:|\(|,\s*)["']?\*["']?\s*[,;)\]}]/.test(line) && !/:\s*true\b/.test(line)) continue;
+          if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) continue;
+
+          const permissiveCredentials =
+            /credentials\s*:\s*true|allow_credentials\s*=\s*True/.test(file.content);
           yield emit({
             path: file.path,
             line: hit.line,
@@ -350,20 +360,32 @@ export const securityRules: Rule[] = [
     },
     function* (ctx, emit) {
       for (const file of filesWithExts(ctx, '.tsx', '.jsx', '.ts', '.js', '.vue', '.svelte')) {
-        for (const hit of file.matchNoComments(/dangerouslySetInnerHTML|v-html|innerHTML\s*=|insertAdjacentHTML|document\.write\s*\(/g)) {
-          const fromModel = /completion|response|llm|openai|anthropic|gemini|message\.content|completion\.text|answer|output/.test(
-            file.content.slice(Math.max(0, hit.index - 600), hit.index + 600),
-          );
+        // Match against the string-masked text: an HTML sink named inside a
+        // remediation string is prose, not a vulnerability. Matching the raw text
+        // made this rule report its own rule description.
+        for (const hit of file.matchCode(/dangerouslySetInnerHTML|v-html|innerHTML\s*=|insertAdjacentHTML|document\.write\s*\(/g)) {
+          const line = file.lineNoComments(hit.line);
+          // Require an actual sink: an assignment or a call argument.
+          if (!/=\s*[{"'`A-Za-z_$]|\(\s*[A-Za-z_$]/.test(line)) continue;
+          if (/^\s*(?:\/\/|\*|\/\*)/.test(line)) continue;
+          // Look for a model *call* in the surrounding code, not the bare word
+          // "output": a remediation string mentioning model output must not be
+          // reported as a vulnerability in itself.
+          const window = file.content.slice(Math.max(0, hit.index - 800), hit.index + 800);
+          const reallyFromModel =
+            /(?:choices\s*\[|message\.content|completion\s*\(|completions\.create|messages\.create|generateContent|\.completion\b|\bllm\b|\bopenai\b|\banthropic\b|\bgemini\b)/i.test(
+              window,
+            );
           if (file.hasExplanatoryCommentNear(hit.line, ['sanitiz', 'dompurify', 'trusted', 'already escaped', 'safe'])) continue;
           yield emit({
             path: file.path,
             line: hit.line,
             snippet: hit.text,
-            evidence: fromModel
+            evidence: reallyFromModel
               ? 'raw HTML injection fed by model output -- LLM output counts as untrusted input'
               : 'raw HTML injection with dynamic content',
-            data: { fromModelOutput: fromModel },
-            severity: fromModel ? 'critical' : 'high',
+            data: { fromModelOutput: reallyFromModel },
+            severity: reallyFromModel ? 'critical' : 'high',
           });
         }
       }
@@ -751,10 +773,59 @@ function hasAuthLibrary(ctx: ScanContext): boolean {
   );
 }
 
+/**
+ * True when a Next.js `middleware.ts` actually guards the API surface.
+ *
+ * Both halves are required: a middleware that only touches `/` leaves `/api`
+ * open, and one that never inspects the session authenticates nothing. Checking
+ * for the file alone produced false negatives; checking for both narrows it to
+ * middleware that is doing the job.
+ */
+function middlewareGuardsApi(ctx: ScanContext): boolean {
+  const middleware = allFiles(ctx).find((f) => /(^|\/)middleware\.(ts|js|tsx|jsx)$/.test(f.path));
+  if (!middleware) return false;
+  const source = middleware.content;
+  // Every way middleware obtains a session: the cookie helper, the request
+  // cookie accessor, a session library, or a bearer header.
+  const readsSession =
+    /\bcookies\s*\(\s*\)|req\.cookies|getServerSession|\bauth\s*\(|getToken|next-auth|NextAuth|authorization/i.test(
+      source,
+    );
+  if (!readsSession) return false;
+  // A matcher that names `/api` explicitly, or omits one entirely (Next.js
+  // middleware with no matcher runs on every path including `/api`).
+  const matcher = /matcher\s*:\s*\[([\s\S]*?)\]/.exec(source)?.[1] ?? '';
+  const coversApi = !matcher || /\/api|\*\*/.test(matcher);
+  return coversApi;
+}
+
+/**
+ * True for a Next.js App Router or Pages route handler.
+ *
+ * These are the routes where the auth question is sharpest: Next.js does not
+ * add authentication for you, and a generated `route.ts` very often does not
+ * call it. Middleware still counts (checked separately).
+ */
+function isNextRoute(file: SourceFile): boolean {
+  if (!/(^|\/)(app|src\/app)\//.test(file.path)) return false;
+  if (!/(^|\/)(route|page|middleware)\.(ts|tsx|js|jsx)$/.test(file.path)) return false;
+  // Skip admin and auth routes, which are the authentication surface itself.
+  return !/(^|\/)(auth|login|signin|signup|session|webhook)/.test(file.path);
+}
+
 function hasAuthCheck(ctx: ScanContext, file: SourceFile): boolean {
   const patterns =
     /getServerSession|auth\(\)|getSession|getToken|requireAuth|isAuthenticated|withAuth|currentUser|req\.user|request\.user|@login_required|Depends\([^)]*(?:current_user|get_current_user|auth)|clerkClient|getAuth\(|verifyToken|jwt\.verify|passport\.authenticate/;
   if (patterns.test(file.content)) return true;
+
+  // Next.js App Router: a route that never calls `auth()` or reads a session is
+  // not authenticated. `next-auth` in the dependencies proves nothing on its
+  // own -- the route still has to invoke it.
+  // Next.js middleware runs before every route, so a route that relies on it
+  // is protected even though the handler itself contains no auth call. That is
+  // the normal pattern, and flagging it was the rule's largest source of false
+  // positives on AI-built Next.js apps.
+  if (isNextRoute(file) && middlewareGuardsApi(ctx)) return true;
   // Framework middleware that guards the whole surface. In Next.js, middleware
   // runs before every matching route, so a session check there covers handlers
   // that do not repeat it -- which is the normal, correct pattern.

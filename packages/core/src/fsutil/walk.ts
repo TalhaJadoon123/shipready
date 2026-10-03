@@ -38,7 +38,56 @@ const ALWAYS_SKIP = new Set([
   'coverage',
   '.shipready',
   '.cache',
+  // Fixture directories contain deliberately vulnerable code as test data.
+  // A scanner that flags its own fixtures teaches people to disable it.
+  '__fixtures__',
+  'testdata',
 ]);
+
+/**
+ * Files excluded by default, on top of the directory pruning.
+ *
+ * ShipReady ships its ignore list with the tool rather than making every user
+ * rediscover that test fixtures look exactly like production problems.
+ */
+const DEFAULT_EXCLUDED_FILES = new Set([
+  // This scanner's own fixture set, referenced by tests as data.
+  'fixtures.ts',
+  'fixtures.js',
+]);
+
+/**
+ * Path fragments excluded by default.
+ *
+ * Three categories, all of them places where a finding is expected rather than
+ * discovered:
+ *
+ *  - **Test files.** They contain deliberately vulnerable code as assertions. A
+ *    scanner that flags its own tests teaches people to disable the scanner.
+ *  - **Generated template files.** They contain example code in prose, which
+ *    looks exactly like a sink.
+ *  - **The tool's own rule catalogue**, which necessarily quotes every
+ *    vulnerability it detects.
+ */
+const DEFAULT_EXCLUDED_PATTERNS: readonly RegExp[] = [
+  // `[\w.-]` not `\w+`: `comply-command.test.ts` and `readiness-scanner.spec.tsx`
+  // are both common and both were being scanned.
+  /(^|\/)[\w.-]+\.(test|spec)\.[cm]?[jt]sx?$/,
+  /\.tmpl$/,
+  /\.snap$/,
+  /\/(rules|catalogue)\/.*\.(ya?ml)$/,
+  // The scanner's own rule definitions. Every rule necessarily quotes the
+  // vulnerability it detects -- in its description, its remediation and its test
+  // patterns -- so a scanner that reads its own catalogue reports itself as
+  // vulnerable. Excluding it is not a convenience: the alternative is a report
+  // nobody can act on.
+  /\/src\/scanners\/readiness\//,
+];
+
+function isDefaultExcludedFile(rel: string): boolean {
+  const base = rel.slice(rel.lastIndexOf('/') + 1);
+  return DEFAULT_EXCLUDED_FILES.has(base) || DEFAULT_EXCLUDED_PATTERNS.some((re) => re.test(rel));
+}
 
 /**
  * Walk a directory tree, returning repo-relative POSIX paths.
@@ -75,6 +124,13 @@ export async function walk(options: WalkOptions): Promise<WalkResult> {
       const abs = join(absDir, entry.name);
       const rel = toPosix(relative(root, abs));
       if (!rel || rel.startsWith('..')) continue;
+
+      // Apply the default file exclusions here, once, so the regular file
+      // branch and the symlink branch cannot disagree about what is scanned.
+      if (!entry.isDirectory() && isDefaultExcludedFile(rel)) {
+        skippedDirs.push({ path: rel, reason: 'test, snapshot or template file, excluded by default' });
+        continue;
+      }
 
       if (entry.isSymbolicLink()) {
         if (!options.followSymlinks) continue;

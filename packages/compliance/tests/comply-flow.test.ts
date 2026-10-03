@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from 'vitest';
-import { mkdtemp, rm, writeFile, mkdir, readFile } from 'node:fs/promises';
-import { join, dirname } from 'node:path';
+import { mkdtemp, rm, writeFile, mkdir } from 'node:fs/promises';
+import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { QUESTIONS, questionFlow, parseAnswer, suggestFrameworks, type Question } from '../src/questionnaire.js';
 import { findGaps, inferFrameworks, isCsrdInScope, complianceScore, sortGaps } from '../src/types.js';
@@ -112,7 +112,7 @@ describe('the questionnaire', () => {
 
   it('skips conditional questions that do not apply', () => {
     const flow = questionFlow({
-      aiSystem: { riskClass: 'minimal', lawfulnessBasis: ['contract'] } as never,
+      aiSystem: { riskClass: 'minimal', lawfulnessBasis: ['contract'] } as Partial<ComplianceAnswer>['aiSystem'],
     });
     expect(flow.map((q) => q.id)).not.toContain('ai.riskRationale');
     expect(flow.map((q) => q.id)).not.toContain('ai.consentMechanism');
@@ -120,7 +120,7 @@ describe('the questionnaire', () => {
 
   it('includes conditional questions that do apply', () => {
     const flow = questionFlow({
-      aiSystem: { riskClass: 'high', lawfulnessBasis: ['consent'], usesGpai: true } as never,
+      aiSystem: { riskClass: 'high', lawfulnessBasis: ['consent'], usesGpai: true } as Partial<ComplianceAnswer>['aiSystem'],
     });
     expect(flow.map((q) => q.id)).toContain('ai.consentMechanism');
     expect(flow.map((q) => q.id)).toContain('ai.gpaiModelName');
@@ -145,7 +145,7 @@ describe('the questionnaire', () => {
   it('can be answered end to end by iterating the flow', () => {
     // Simulate what the CLI does: build the flow, answer each question, assign.
     const flow: Question[] = questionFlow({});
-    const answer: Partial<ComplianceAnswer> = { aiSystem: {}, company: {} };
+    const answer = { aiSystem: {}, company: {} } as unknown as Partial<ComplianceAnswer>;
     const responses: Record<string, string> = {
       'company.legalName': 'Northwind Analytics Ltd',
       'company.registrationNumber': '12345678',
