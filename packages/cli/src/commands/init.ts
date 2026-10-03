@@ -1,5 +1,6 @@
 import { mkdir, readFile, writeFile } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
+import { createRequire } from 'node:module';
 
 /**
  * First-run scaffolding: `shipready init`.
@@ -31,15 +32,47 @@ const CI_TARGETS: { file: string; label: string }[] = [
   { file: 'Jenkinsfile', label: 'Jenkins' },
 ];
 
-const PIPELINE_SNIPPET = `# ShipReady: production readiness gate.
-# Fails the build when the score drops below ${'$'}THRESHOLD, or when a
+/**
+ * The version this CLI was installed as.
+ *
+ * Written into the generated workflow so the gate is reproducible. A bare
+ * `npx shipready` resolves to whatever is newest at the moment CI runs, so a
+ * patch release could change a build's outcome with no commit to show for it,
+ * and before the first publish it fails outright. Falls back to reading the
+ * package's own manifest, which is what actually gets printed.
+ */
+function cliVersion(): string {
+  try {
+    const require = createRequire(import.meta.url);
+    return (require('../package.json') as { version?: string }).version ?? '0.1.0';
+  } catch {
+    return '0.1.0';
+  }
+}
+
+/**
+ * The snippet shown when a pipeline already exists, so the user is told what to
+ * add rather than having a second file written for them.
+ *
+ * A function rather than a constant because the values are interpolated
+ * directly. This was a constant with `$THRESHOLD`-style placeholders that were
+ * then substituted by `.replace('${THRESHOLD}', ...)`, which never matched --
+ * the escaped form is `$THRESHOLD`, not `${THRESHOLD}`. Anyone who had a CI
+ * file already and ran `shipready init --ci` was shown a literal
+ * `$THRESHOLD` to paste, and `npx shipready` that would not exist before the
+ * first publish.
+ */
+function pipelineSnippet(threshold: number): string {
+  return `# ShipReady: production readiness gate.
+# Fails the build when the score drops below ${threshold}, or when a
 # launch-blocker appears that was not there before.
-npx shipready scan . --threshold ${'$'}THRESHOLD --format sarif --output shipready.sarif
+npx shipready@${cliVersion()} scan . --threshold ${threshold} --format sarif --output shipready.sarif
 
 # Optional: upload SARIF to GitHub code scanning.
 # - uses: github/codeql-action/upload-sarif@v3
 #   with:
 #     sarif_file: shipready.sarif`;
+}
 
 export async function runInit(options: InitOptions): Promise<InitResult> {
   const cwd = resolve(options.cwd);
@@ -53,7 +86,7 @@ export async function runInit(options: InitOptions): Promise<InitResult> {
       skipped.push({
         path: existing.file,
         reason: `${existing.label} already configured. Add the readiness step yourself:
-${indent(PIPELINE_SNIPPET.replace('${THRESHOLD}', String(options.threshold)))}`,
+${indent(pipelineSnippet(options.threshold))}`,
       });
     } else {
       const path = existing?.file ?? CI_TARGETS[0]!.file;
@@ -167,6 +200,7 @@ async function ensureIgnoreEntry(gitignorePath: string, entries: readonly string
 }
 
 function renderPipeline(threshold: number): string {
+  const version = cliVersion();
   return `name: CI
 
 on:
@@ -198,7 +232,7 @@ jobs:
       # ShipReady: production readiness gate.
       # Fails below ${threshold}, and fails outright on any new launch blocker.
       - name: Production readiness
-        run: npx shipready scan . --threshold ${threshold} --format sarif --output shipready.sarif
+        run: npx shipready@${version} scan . --threshold ${threshold} --format sarif --output shipready.sarif
 
       # Upload to GitHub code scanning so findings show up on the PR diff.
       - uses: github/codeql-action/upload-sarif@v3

@@ -214,7 +214,15 @@ export function hasCommentMentioning(files: readonly SourceFile[], needle: strin
   return files.some((f) => f.comments.some((c) => c.text.toLowerCase().includes(n)));
 }
 
-/** Human label for the detected stack, for evidence summaries. */
+/**
+ * Human label for the detected stack, used as the subject of an evidence
+ * sentence: `${stackLabel(ctx)} service with no /health endpoint`.
+ *
+ * The fallback capitalises, because these strings start a sentence in the
+ * console and HTML reports. A lowercase "the project service with no /health"
+ * read as a broken sentence, which is exactly what a report is trying not to
+ * look like.
+ */
 export function stackLabel(ctx: ScanContext): string {
   switch (ctx.project.type) {
     case 'nextjs':
@@ -235,7 +243,12 @@ export function stackLabel(ctx: ScanContext): string {
       return 'Python';
     case 'node':
       return 'Node.js';
-    default:
-      return ctx.project.frameworks[0] ?? 'the project';
+    default: {
+      const framework = ctx.project.frameworks[0];
+      if (!framework) return 'The project';
+      // Framework names arrive lowercased ("next.js", "express"). Capitalise
+      // the first letter without touching the rest, so "Next.js" stays "Next.js".
+      return framework.charAt(0).toUpperCase() + framework.slice(1);
+    }
   }
 }

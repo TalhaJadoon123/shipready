@@ -15,7 +15,12 @@
     "./packs/*": "./packs/*",
     "./package.json": "./package.json"
   },
-  "files": ["index.js", "index.d.ts", "packs", "README.md"],
+  "files": [
+    "index.js",
+    "index.d.ts",
+    "packs",
+    "README.md"
+  ],
   "scripts": {
     "build": "node -e \"console.log('rules is data, nothing to build')\"",
     "typecheck": "tsc -p tsconfig.json --noEmit",
@@ -24,5 +29,8 @@
   },
   "devDependencies": {
     "typescript": "^5.7.2"
+  },
+  "engines": {
+    "node": ">=20.10.0"
   }
 }

@@ -152,7 +152,7 @@ describe('shipready init', () => {
     expect(result.nextSteps.length).toBeGreaterThan(0);
 
     const workflow = await readFile(join(dir, '.github/workflows/ci.yml'), 'utf8');
-    expect(workflow).toContain('shipready scan');
+    expect(workflow).toMatch(/shipready@\d+\.\d+\.\d+ scan/);
     expect(workflow).toContain('--threshold 65');
     expect(workflow).toContain('upload-sarif');
   });
@@ -167,11 +167,38 @@ describe('shipready init', () => {
     expect(skipped?.reason).toContain('already configured');
   });
 
+  it('pins the CLI version in the generated workflow', async () => {
+    // An unpinned `npx shipready` resolves to whatever is newest when CI runs,
+    // so a patch release can change a build outcome with no commit behind it --
+    // and before the first publish it 404s outright.
+    await runInit({ ci: true, force: false, threshold: 65, cwd: dir });
+    const workflow = await readFile(join(dir, '.github/workflows/ci.yml'), 'utf8');
+    expect(workflow).toMatch(/npx shipready@\d+\.\d+\.\d+/);
+    expect(workflow).not.toMatch(/npx shipready scan/);
+  });
+
+  it('shows a pasteable snippet with real values when a pipeline exists', async () => {
+    // This message used to render a literal `$THRESHOLD`, because the template
+    // escaped the placeholder as `$THRESHOLD` while the replacement looked for
+    // `${THRESHOLD}`. Nobody could paste what it printed.
+    await mkdir(join(dir, '.github/workflows'), { recursive: true });
+    await writeFile(join(dir, '.github/workflows/ci.yml'), 'name: Existing\n', 'utf8');
+
+    const result = await runInit({ ci: true, force: false, threshold: 42, cwd: dir });
+    const skipped = result.skipped.find((s) => s.path === '.github/workflows/ci.yml');
+    const reason = skipped?.reason ?? '';
+
+    expect(reason).toContain('--threshold 42');
+    expect(reason).not.toContain('$THRESHOLD');
+    expect(reason).not.toContain('$VERSION');
+    expect(reason).toMatch(/shipready@\d+\.\d+\.\d+/);
+  });
+
   it('overwrites only with --force', async () => {
     await mkdir(join(dir, '.github/workflows'), { recursive: true });
     await writeFile(join(dir, '.github/workflows/ci.yml'), 'name: Existing\n', 'utf8');
     await runInit({ ci: true, force: true, threshold: 50, cwd: dir });
-    expect(await readFile(join(dir, '.github/workflows/ci.yml'), 'utf8')).toContain('shipready scan');
+    expect(await readFile(join(dir, '.github/workflows/ci.yml'), 'utf8')).toMatch(/shipready@\d+\.\d+\.\d+ scan/);
   });
 
   it('adds .shipready to .gitignore', async () => {
