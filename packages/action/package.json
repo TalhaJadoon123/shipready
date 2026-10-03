@@ -1,0 +1,18 @@
+{
+  "name": "@shipready/action",
+  "version": "0.1.0",
+  "description": "ShipReady as a GitHub Action: score the pull request, post the report, upload SARIF, and fail on a launch blocker.",
+  "license": "MIT",
+  "private": true,
+  "type": "module",
+  "main": "index.mjs",
+  "scripts": {
+    "typecheck": "node --check index.mjs",
+    "lint": "echo \"@shipready/action: plain ESM, checked with node --check\"",
+    "test": "vitest run",
+    "prepack": "echo \"@shipready/action is consumed from the repository, not npm\""
+  },
+  "devDependencies": {
+    "vitest": "^2.1.8"
+  }
+}

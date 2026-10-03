@@ -1,0 +1,79 @@
+name: ShipReady
+description: Production-readiness scoring for AI-built codebases. Fails the build on launch blockers.
+author: ShipReady
+
+branding:
+  icon: shield-check
+  color: blue
+
+inputs:
+  path:
+    description: Path to scan
+    required: false
+    default: '.'
+
+  threshold:
+    description: Minimum acceptable score (0-100)
+    required: false
+    default: '50'
+
+  baseline:
+    description: >-
+      Fail only on a regression against the last recorded scan rather than on
+      an absolute score. Lets an existing codebase adopt ShipReady without
+      going red on day one.
+    required: false
+    default: 'false'
+
+  baseline-file:
+    description: >-
+      Where to record the score for the next run's baseline. Written when the
+      workflow is not a pull request.
+    required: false
+    default: '.shipready/baseline.json'
+
+  fail-on:
+    description: 'blocker | any | never'
+    required: false
+    default: 'blocker'
+
+  format:
+    description: Output format in the job log
+    required: false
+    default: 'github'
+
+  output:
+    description: Write the report to this file as well
+    required: false
+
+  sarif-output:
+    description: >-
+      Write SARIF here for GitHub code scanning. Set to shipready.sarif to get
+      findings on the pull-request diff.
+    required: false
+    default: 'shipready.sarif'
+
+  comment:
+    description: Post or update a pull-request comment
+    required: false
+    default: 'true'
+
+  annotations:
+    description: Emit GitHub Actions annotations
+    required: false
+    default: 'true'
+
+  working-directory:
+    description: Directory to run the scan in
+    required: false
+
+  token:
+    description: >-
+      Token used to post the pull-request comment. Defaults to the automatic
+      GITHUB_TOKEN; set only if your policy requires a finer-grained one.
+    required: false
+
+runs:
+  using: node20
+  main: index.mjs
+
