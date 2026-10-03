@@ -94,6 +94,23 @@ scanner against a mature codebase we have no stake in, found it was confidently
 wrong, and fixed it.* Most scanner vendors have never run their tool on anything
 except their own fixtures.
 
+### And speed, which is the other half of "you can use this in CI"
+
+| Repository | Cold scan | Throughput |
+|---|---|---|
+| 400 lines | 340ms | ~1,200 l/s |
+| 12,000 lines | 700ms | ~17,000 l/s |
+| 60,000 lines | 4.5s | ~13,000 l/s |
+
+Scanning was **quadratic in file length** — `lineNoComments` re-split the whole
+file on every call, so an 8,000-line file took 61 seconds and a 60k-line repo
+took 39. Now 3.0s and 4.5s respectively. Reproduce with
+`node docs/investor/bench.mjs`.
+
+This matters competitively and it is worth saying out loud: a gate that takes
+two minutes is a gate that gets disabled. Finding this required measuring rather
+than assuming, and fixing it required reading the hot path rather than guessing.
+
 ---
 
 ## 4. Market

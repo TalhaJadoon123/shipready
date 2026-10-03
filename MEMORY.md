@@ -67,6 +67,33 @@ Run it: `pnpm --filter @shipready/web seed` then `pnpm --filter @shipready/web d
 5. `className="pill {severity}"` is a literal string and never matched; needs a
    template literal.
 
+## Performance (commit 5ff79af) — do not regress
+
+Scanning was **quadratic in file length**: `SourceFile.lineNoComments` re-split
+the whole file on every call, and rules call it per line inside loops that also
+iterate lines. An 8,000-line file took 61s. Also fixed: eager comment masking,
+`hasExplanatoryCommentNear` scanning all comments per call (now indexed by
+line), `buildLineIndex` rebuilt per rule (now memoized 2-entry), `matchLines`
+recompiling its RegExp per line.
+
+60k-line repo: 39s -> 4.5s. Single 8k file: 61s -> 3.0s. Self-scan 8.5s ->
+1.5s. `docs/investor/bench.mjs` reproduces it; `tests/performance.test.ts` pins
+the linear behaviour by ratio (verified to fail if the cache is removed).
+
+## Launch state (commit bb1e94d)
+
+`docs/investor/LAUNCH.md` is the ordered path to release.
+
+**Hard blocker: nothing is on npm.** The CLI depends on five workspace packages,
+so all six must be published before any install works — a naive install gives
+`ERR_PNPM_FETCH_404 @shipready/einvoice`. Publish order: core, rules, einvoice,
+compliance, observer, then cli last. The code is fine — verified working from a
+clean tarball install outside the monorepo.
+
+Also outstanding: no git remote (nothing pushed), no landing page, no pricing,
+no CI on this repo, dashboard has **no authentication** (must not be deployed
+publicly), and the **Drizzle/Postgres adapter is unwritten**.
+
 ## Open items
 
 **Never configured: `git remote -v` / no push has ever happened.** No remote is

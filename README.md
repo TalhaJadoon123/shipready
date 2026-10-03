@@ -159,6 +159,24 @@ score that cannot be audited is a vibe.
 
 ---
 
+## Performance
+
+A gate nobody can afford to run does not get run, so this is measured rather than
+assumed. `node docs/investor/bench.mjs` reproduces the table:
+
+| Repository | Cold scan | Throughput |
+|---|---|---|
+| 400 lines, 1 file | 340ms | ~1,200 lines/sec |
+| 12,000 lines, 60 files | 700ms | ~17,000 lines/sec |
+| 60,000 lines, 150 files | 4.5s | ~13,000 lines/sec |
+
+Cost per line is flat as files grow, which is the property that matters: an
+earlier version re-split each file on every masked line access and was
+quadratic, taking 39 seconds on that 60,000-line repository and 61 seconds on a
+single 8,000-line file.
+
+---
+
 ## Accuracy
 
 A scanner that reports a mature codebase as undisciplined gets uninstalled, and
