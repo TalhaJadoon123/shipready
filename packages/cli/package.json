@@ -1,0 +1,45 @@
+{
+  "name": "@shipready/cli",
+  "version": "0.1.0",
+  "description": "ShipReady CLI: production readiness scanning, agent observability, compliance docs and e-invoicing validation.",
+  "license": "MIT",
+  "type": "module",
+  "bin": {
+    "shipready": "./bin/shipready.mjs"
+  },
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./package.json": "./package.json"
+  },
+  "files": ["bin", "dist", "README.md"],
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "dev": "tsc -p tsconfig.build.json --watch",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "lint": "eslint src",
+    "test": "vitest run",
+    "test:watch": "vitest"
+  },
+  "dependencies": {
+    "@shipready/compliance": "workspace:*",
+    "@shipready/core": "workspace:*",
+    "@shipready/einvoice": "workspace:*",
+    "@shipready/observer": "workspace:*",
+    "@shipready/rules": "workspace:*",
+    "commander": "^12.1.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.10.2",
+    "typescript": "^5.7.2",
+    "vitest": "^2.1.8"
+  },
+  "publishConfig": {
+    "access": "public"
+  }
+}
