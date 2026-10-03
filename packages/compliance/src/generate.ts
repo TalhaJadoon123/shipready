@@ -241,6 +241,16 @@ export const AUTHOR_PLACEHOLDERS: ReadonlySet<string> = new Set([
 const here = dirname(fileURLToPath(import.meta.url));
 const TEMPLATE_DIR = join(here, '..', 'templates');
 
+/**
+ * What an unanswered value renders as.
+ *
+ * A regulatory document has two kinds of blank, and only one of them is honest:
+ * a blank that means "we were asked and the answer is empty" is fine; a blank
+ * that means "nobody answered" looks identical on the page. So every
+ * unresolved value renders as a visible marker.
+ */
+const NOT_PROVIDED = '**NOT PROVIDED** (see gap report)';
+
 export interface GeneratedDocument {
   id: string;
   framework: Framework;
@@ -382,7 +392,7 @@ function substitute(
     if (!AUTHOR_PLACEHOLDERS.has(key)) unresolved.push(key);
     // A visible marker rather than an empty string: a blank in a regulatory
     // document reads as an author choice.
-    return `**NOT PROVIDED** (see gap report)`;
+    return NOT_PROVIDED;
   });
 
   void gaps;
@@ -397,8 +407,19 @@ function substitute(
  */
 function buildValues(answer: ComplianceAnswer, notes: Record<string, string>): Record<string, string> {
   const { company: c, aiSystem: a } = answer;
-  const list = (items: readonly string[], empty = 'None declared'): string =>
-    items.length > 0 ? items.map((i) => `- ${i}`).join('\n') : empty;
+  /**
+   * Render a list.
+   *
+   * `undefined` means the questionnaire was never asked, which is different
+   * from an empty array meaning the answer is genuinely "none of these". A
+   * regulatory document that says "None declared" when the question was skipped
+   * is asserting something nobody confirmed, so an unanswered list is marked the
+   * same way every other missing value is.
+   */
+  const list = (items: readonly string[] | undefined, empty = 'None declared'): string => {
+    if (items === undefined) return NOT_PROVIDED;
+    return items.length > 0 ? items.map((i) => `- ${i}`).join('\n') : empty;
+  };
 
   const basisLabel: Record<string, string> = {
     consent: 'Consent (Art. 6(1)(a))',
@@ -451,7 +472,7 @@ function buildValues(answer: ComplianceAnswer, notes: Record<string, string>): R
     AI_ROLE: a.role === 'provider' ? 'Provider' : a.role === 'deployer' ? 'Deployer' : 'Provider and deployer',
     RISK_CLASS: riskLabel(a.riskClass),
     RISK_CLASS_RAW: a.riskClass,
-    RISK_RATIONALE: a.riskRationale ?? '**NOT PROVIDED** (see gap report)',
+    RISK_RATIONALE: a.riskRationale ?? NOT_PROVIDED,
     DEPLOYMENT_CONTEXTS: list(a.deploymentContexts),
     USERS_AFFECTED: list(a.usersAffected),
     MODEL_PROVIDERS: list(a.modelProviders),
@@ -462,7 +483,7 @@ function buildValues(answer: ComplianceAnswer, notes: Record<string, string>): R
       ? 'Yes. Decisions are made without human intervention.'
       : 'No. A human reviews every decision.',
     HUMAN_OVERSIGHT_MEASURES: list(a.humanOversightMeasures),
-    HUMAN_OVERSIGHT_RESPONSIBLE: a.humanOversightResponsible ?? '**NOT PROVIDED** (see gap report)',
+    HUMAN_OVERSIGHT_RESPONSIBLE: a.humanOversightResponsible ?? NOT_PROVIDED,
     DATA_CATEGORIES: list(a.dataCategories.map((d) => dataCategoryLabel[d] ?? d)),
     SPECIAL_CATEGORY: a.processesSpecialCategory
       ? `Yes. Special category data under Article 9 is processed.${a.anonymisationOrPseudonymisation ? ` ${a.anonymisationOrPseudonymisation}` : ''}`
@@ -470,18 +491,18 @@ function buildValues(answer: ComplianceAnswer, notes: Record<string, string>): R
     LAWFUL_BASIS: list(a.lawfulnessBasis.map((b) => basisLabel[b] ?? b)),
     CONSENT_MECHANISM: a.consentMechanism ?? 'Not applicable (consent is not the basis).',
     DATA_PROVENANCE: a.dataProvenance,
-    DATA_RETENTION: a.dataRetentionPeriod ?? '**NOT PROVIDED** (see gap report)',
+    DATA_RETENTION: a.dataRetentionPeriod ?? NOT_PROVIDED,
     ANONYMISATION: a.anonymisationOrPseudonymisation ?? 'Not implemented.',
-    ACCURACY_METRICS: a.accuracyMetrics ?? '**NOT PROVIDED** (see gap report)',
+    ACCURACY_METRICS: a.accuracyMetrics ?? NOT_PROVIDED,
     ROBUSTNESS_MEASURES: list(a.robustnessMeasures),
     CYBERSECURITY_MEASURES: list(a.cybersecurityMeasures),
-    EVALUATION_APPROACH: a.evaluationApproach ?? '**NOT PROVIDED** (see gap report)',
+    EVALUATION_APPROACH: a.evaluationApproach ?? NOT_PROVIDED,
     LOGGING_ENABLED: a.loggingEnabled ? 'Yes' : 'No',
     LOGGING_DETAIL: a.loggingDetail,
     LOG_RETENTION: a.retentionOfLogs ?? 'Not defined.',
     LOG_HUMAN_OVERSIGHT: a.humanOversightOfLogs ?? 'Not defined.',
-    POST_MARKET_PLAN: a.postMarketMonitoringPlan ?? '**NOT PROVIDED** (see gap report)',
-    INCIDENT_RESPONSE: a.incidentResponseProcess ?? '**NOT PROVIDED** (see gap report)',
+    POST_MARKET_PLAN: a.postMarketMonitoringPlan ?? NOT_PROVIDED,
+    INCIDENT_RESPONSE: a.incidentResponseProcess ?? NOT_PROVIDED,
     CONFORMITY_DONE: a.conformityAssessmentDone ? 'Yes' : 'No',
     CE_MARKING: a.ceMarkingObtained ? 'Yes' : 'No',
     NOTIFIED_BODY: a.notifiedBodyEngaged ? 'Yes' : 'No',
@@ -491,39 +512,39 @@ function buildValues(answer: ComplianceAnswer, notes: Record<string, string>): R
       : 'No.',
     // Residual risk rows are a table the author fills in; an empty row beats a
     // fabricated risk score.
-    ACCURACY_THRESHOLD: notes.accuracyThreshold ?? '**NOT PROVIDED** (see gap report)',
-    ERROR_RATE_THRESHOLD: notes.errorRateThreshold ?? '**NOT PROVIDED** (see gap report)',
-    LATENCY_THRESHOLD: notes.latencyThreshold ?? '**NOT PROVIDED** (see gap report)',
-    COST_THRESHOLD: notes.costThreshold ?? '**NOT PROVIDED** (see gap report)',
-    RESIDUAL_RISK_ONE: '**NOT PROVIDED** (see gap report)',
-    RISK_MANAGEMENT_APPROACH: a.riskManagementApproach ?? '**NOT PROVIDED** (see gap report)',
-    COMPLAINTS_PROCESS: a.complaintsProcess ?? '**NOT PROVIDED** (see gap report)',
+    ACCURACY_THRESHOLD: notes.accuracyThreshold ?? NOT_PROVIDED,
+    ERROR_RATE_THRESHOLD: notes.errorRateThreshold ?? NOT_PROVIDED,
+    LATENCY_THRESHOLD: notes.latencyThreshold ?? NOT_PROVIDED,
+    COST_THRESHOLD: notes.costThreshold ?? NOT_PROVIDED,
+    RESIDUAL_RISK_ONE: NOT_PROVIDED,
+    RISK_MANAGEMENT_APPROACH: a.riskManagementApproach ?? NOT_PROVIDED,
+    COMPLAINTS_PROCESS: a.complaintsProcess ?? NOT_PROVIDED,
     DPIA: a.dataProtectionImpactAssessment ? 'Completed' : 'Required but not completed',
     DPO_CONSULTED: a.dpoConsulted ? 'Yes' : 'No',
 
     // --- CSRD notes, all optional ---
-    CSRD_MATERIALITY: notes.csrdMateriality ?? '**NOT PROVIDED** (see gap report)',
-    CSRD_IMPACT_MATERIALITY: notes.csrdImpactMateriality ?? '**NOT PROVIDED** (see gap report)',
-    CSRD_FINANCIAL_MATERIALITY: notes.csrdFinancialMateriality ?? '**NOT PROVIDED** (see gap report)',
-    GHG_SCOPE1: notes.ghgScope1 ?? '**NOT PROVIDED** (see gap report)',
-    SCOPE1_TOTAL: notes.ghgScope1 ?? '**NOT PROVIDED** (see gap report)',
-    SCOPE2_LOCATION_TOTAL: notes.ghgScope2 ?? '**NOT PROVIDED** (see gap report)',
+    CSRD_MATERIALITY: notes.csrdMateriality ?? NOT_PROVIDED,
+    CSRD_IMPACT_MATERIALITY: notes.csrdImpactMateriality ?? NOT_PROVIDED,
+    CSRD_FINANCIAL_MATERIALITY: notes.csrdFinancialMateriality ?? NOT_PROVIDED,
+    GHG_SCOPE1: notes.ghgScope1 ?? NOT_PROVIDED,
+    SCOPE1_TOTAL: notes.ghgScope1 ?? NOT_PROVIDED,
+    SCOPE2_LOCATION_TOTAL: notes.ghgScope2 ?? NOT_PROVIDED,
     SCOPE3_TOTAL: notes.ghgScope3 ?? 'Not yet assessed.',
-    TOTAL_LOCATION: notes.ghgTotal ?? '**NOT PROVIDED** (see gap report)',
-    GHG_SCOPE2: notes.ghgScope2 ?? '**NOT PROVIDED** (see gap report)',
+    TOTAL_LOCATION: notes.ghgTotal ?? NOT_PROVIDED,
+    GHG_SCOPE2: notes.ghgScope2 ?? NOT_PROVIDED,
     GHG_SCOPE3: notes.ghgScope3 ?? 'Not yet assessed.',
     GHG_METHOD: notes.ghgMethod ?? 'GHG Protocol, Corporate Standard, with secondary-market and location-based reporting.',
     GHG_BOUNDARY: notes.ghgBoundary ?? 'Operational control, equity share.',
     CLIMATE_TARGET: notes.climateTarget ?? 'No target set.',
-    CLIMATE_TRANSITION_PLAN: notes.climateTransitionPlan ?? '**NOT PROVIDED** (see gap report)',
-    SUSTAINABILITY_METRICS: notes.sustainabilityMetrics ?? '**NOT PROVIDED** (see gap report)',
+    CLIMATE_TRANSITION_PLAN: notes.climateTransitionPlan ?? NOT_PROVIDED,
+    SUSTAINABILITY_METRICS: notes.sustainabilityMetrics ?? NOT_PROVIDED,
     NIS2_ENTITY_TYPE: notes.nis2EntityType ?? 'Essential entity',
-    NIS2_MANAGEMENT_BODIES: notes.nis2ManagementBodies ?? '**NOT PROVIDED** (see gap report)',
-    NIS2_INCIDENT_HANDLING: notes.nis2IncidentHandling ?? '**NOT PROVIDED** (see gap report)',
+    NIS2_MANAGEMENT_BODIES: notes.nis2ManagementBodies ?? NOT_PROVIDED,
+    NIS2_INCIDENT_HANDLING: notes.nis2IncidentHandling ?? NOT_PROVIDED,
     NIS2_SUPPLY_CHAIN: notes.nis2SupplyChain ?? 'Not assessed.',
     SOC2_CRITERIA: notes.soc2Criteria ?? 'CC6.1, CC6.6, CC7.1, CC7.2, CC8.1',
-    SOC2_INCIDENT_PROCESS: notes.soc2IncidentProcess ?? '**NOT PROVIDED** (see gap report)',
-    SOC2_CHANGE_MANAGEMENT: notes.soc2ChangeManagement ?? '**NOT PROVIDED** (see gap report)',
+    SOC2_INCIDENT_PROCESS: notes.soc2IncidentProcess ?? NOT_PROVIDED,
+    SOC2_CHANGE_MANAGEMENT: notes.soc2ChangeManagement ?? NOT_PROVIDED,
   };
 }
 
@@ -567,6 +588,7 @@ function appendGapReport(body: string, gaps: readonly Gap[], prefix: string): st
   for (const gap of relevant) {
     lines.push(`### ${gap.id}`);
     lines.push('');
+    lines.push(`- **Status:** NOT PROVIDED — the section above is incomplete because of this.`);
     lines.push(`- **Severity:** ${gap.severity.toUpperCase()}`);
     lines.push(`- **Missing:** ${gap.message}`);
     lines.push(`- **Why it matters:** ${gap.why}`);

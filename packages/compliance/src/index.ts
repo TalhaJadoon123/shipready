@@ -54,6 +54,7 @@ export {
   toMarkdownBundle,
   toJsonBundle,
   toDocxBundle,
+  buildManifest,
   zipSync,
   type ExportFormat,
   type BundleFile,

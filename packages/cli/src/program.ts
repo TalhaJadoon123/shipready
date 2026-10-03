@@ -2,9 +2,11 @@ import { Command } from 'commander';
 import { runScanCommand, runFixCommand, runReportCommand } from './commands/scan.js';
 import { runInit } from './commands/init.js';
 import { runObserve, runTraceCommand, type TraceOptions } from './commands/observe.js';
+import { runValidate, runConvert } from './commands/einvoice.js';
 import { c, error, heading, info, success, warn, setColour } from './ui.js';
 import { loadConfig } from './config.js';
 import { setColour as setCoreColour } from '@shipready/core';
+import { resolve } from 'node:path';
 import { rules } from './rules.js';
 import type { Severity } from '@shipready/core';
 
@@ -331,6 +333,43 @@ export function createProgram(deps: ProgramDeps = {}): Command {
       heading('  Next');
       result.nextSteps.forEach((step, i) => info(`  ${i + 1}. ${step}`));
       info('');
+    });
+
+  // --- validate -----------------------------------------------------------
+  program
+    .command('validate')
+    .description('Validate an e-invoice against its country schema and business rules')
+    .argument('<file>', 'the invoice XML')
+    .option('--fix', 'correct what can be corrected without guessing')
+    .option('--json', 'emit the result as JSON')
+    .option('-o, --output <file>', 'write the corrected document (with --fix) or the report')
+    .action(async (file: string, opts: Record<string, unknown>) => {
+      const outcome = await runValidate({
+        path: resolve(process.cwd(), file),
+        fix: Boolean(opts.fix),
+        json: Boolean(opts.json),
+        cwd: process.cwd(),
+        ...(opts.output ? { output: String(opts.output) } : {}),
+      });
+      setExitCode(outcome.exitCode);
+    });
+
+  // --- convert ------------------------------------------------------------
+  program
+    .command('convert')
+    .description('Convert an e-invoice between formats')
+    .argument('<file>', 'the invoice XML')
+    .requiredOption('-t, --to <format>', 'xml | csv | json')
+    .option('-o, --output <file>', 'write to a file instead of stdout')
+    .action(async (file: string, opts: Record<string, unknown>) => {
+      const outcome = await runConvert({
+        path: resolve(process.cwd(), file),
+        to: String(opts.to) as never,
+        cwd: process.cwd(),
+        ...(opts.output ? { output: String(opts.output) } : {}),
+      });
+      setExitCode(outcome.exitCode);
+      for (const warning of outcome.warnings) warn(warning);
     });
 
   // --- rules --------------------------------------------------------------
