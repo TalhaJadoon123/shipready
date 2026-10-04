@@ -26,3 +26,4 @@ pnpm-debug.log*
 shipready.db
 shipready-traces/
 coverage/
+.artifacts/
