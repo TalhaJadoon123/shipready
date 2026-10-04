@@ -21,7 +21,8 @@
     "test:watch": "vitest",
     "format": "prettier --write \"**/*.{ts,tsx,md,json,yaml,yml}\"",
     "format:check": "prettier --check \"**/*.{ts,tsx,md,json,yaml,yml}\"",
-    "clean": "rimraf \"packages/*/dist\" \"packages/*/.turbo\"",
+    "clean": "node scripts/clean.mjs",
+    "verify:build": "pnpm clean && pnpm build && node scripts/verify-build.mjs",
     "shipready": "node packages/cli/bin/shipready.mjs",
     "prepare": "husky || true"
   },

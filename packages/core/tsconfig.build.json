@@ -2,7 +2,12 @@
   "extends": "./tsconfig.json",
   "compilerOptions": {
     "rootDir": "src",
-    "outDir": "dist"
+    "outDir": "dist",
+    // Inside dist on purpose. `pnpm clean` deletes dist/, and an incremental
+    // build whose outputs were deleted but whose buildinfo survived believes it
+    // is up to date, emits nothing, and exits 0. That silent no-op is what made
+    // a clean `pnpm -r build` fail with "cannot find module @shipready/observer".
+    "tsBuildInfoFile": "dist/.tsbuildinfo"
   },
   "include": ["src/**/*.ts"],
   "exclude": ["tests", "**/*.test.ts", "src/**/fixtures/**"]
