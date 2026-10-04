@@ -80,6 +80,35 @@ recompiling its RegExp per line.
 1.5s. `docs/investor/bench.mjs` reproduces it; `tests/performance.test.ts` pins
 the linear behaviour by ratio (verified to fail if the cache is removed).
 
+## Release gate (commits e4b52b2, 0dc1b68)
+
+`pnpm verify:release` runs the whole thing in order: clean build → assert output
+→ typecheck → test → pack → inspect tarballs.
+
+Three bugs that only appear when you start from an empty tree:
+
+- **`pnpm clean` never worked.** It was a rimraf glob; rimraf 6 treats args as
+  literal paths and errors with `Illegal characters in path`. Now
+  `scripts/clean.mjs`.
+- **tsc silently emitted nothing** after a clean. `incremental: true` writes a
+  buildinfo; deleting dist/ but not the buildinfo made tsc emit zero files and
+  **exit 0**. `tsBuildInfoFile` now points inside `dist/` in all five compiled
+  packages. `scripts/verify-build.mjs` asserts output exists.
+- **turbo.json rejects** both a `//` comment key and a per-task `concurrency`
+  (root-only). Both fail as `turbo_json_parse_error` with no useful message.
+
+**Watch for orphaned node processes.** ~18 accumulated on a 4-CPU box and made
+`pnpm -r test` fail with `[vitest-worker]: Timeout calling "onTaskUpdate"` —
+which reads like a test failure but was pure resource starvation; every suite
+passes alone. `@shipready/observer` now uses `singleFork: true`. If tests fail
+with worker timeouts, run `Get-Process node | Stop-Process -Force` first.
+
+**Windows:** `pnpm` resolves to `pnpm.ps1`, which mangles args containing
+spaces in paths (reports `Unknown option: 'recursive'`). Use `npm.cmd` with
+`shell: true` in Node scripts — Node cannot spawn a `.cmd` directly
+(`spawnSync npm.cmd EINVAL`). `npm pack --pack-destination` needs the directory
+to exist first.
+
 ## Launch state (commit bb1e94d)
 
 `docs/investor/LAUNCH.md` is the ordered path to release.

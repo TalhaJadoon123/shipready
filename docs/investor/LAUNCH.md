@@ -14,9 +14,20 @@ Status as of the last run: **step 1 done, everything else outstanding.**
 - [x] `CONTRIBUTING.md` — including the false-positive discipline that defines
       this project
 - [x] `CODE_OF_CONDUCT.md`
+- [x] `LICENSE` in **each** published package (root is not enough)
+- [x] `README.md` in each published package that is user-facing
+- [x] `engines: node >=20.10.0` on all six
+- [x] Packed tarballs verified: `pnpm pack:all` inspects every archive
 - [ ] `CHANGELOG.md` — generate at release, or use `npm version` + a release page
-- [ ] `LICENSE` present in **each** published package (root is not enough)
-- [ ] `README.md` in each published package that is user-facing
+
+**Run the gate before you publish:**
+
+```bash
+pnpm verify:release   # clean build -> assert output -> typecheck -> test -> pack -> inspect
+```
+
+It catches the class of bug where a package builds to an empty `dist/` and still
+exits 0, which is how `pnpm clean && pnpm -r build` was silently broken.
 
 ## 2. Verify the package actually installs — BLOCKED
 
