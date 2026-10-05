@@ -2,8 +2,8 @@ import { spawn } from 'node:child_process';
 import { createHash } from 'node:crypto';
 import { estimateCost } from './pricing.js';
 import { humanUsd } from './util.js';
-import { existsSync, mkdirSync } from 'node:fs';
-import { dirname, join } from 'node:path';
+import { existsSync, mkdirSync, statSync } from 'node:fs';
+import { dirname, isAbsolute, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { TraceRecorder } from './recorder.js';
 import { TraceStore } from './store.js';
@@ -72,7 +72,10 @@ export async function observe(options: ObserveOptions): Promise<ObserveResult> {
     };
   }
 
-  const argv = parseCommand(commandLine);
+  // The cwd matters: `parseCommand` resolves relative paths against it when
+  // deciding whether a token is a program path broken by a space, and the child
+  // is spawned from there rather than from ours.
+  const argv = parseCommand(commandLine, cwd);
   const [program, ...args] = argv;
   if (!program) {
     return {
@@ -120,9 +123,16 @@ export async function observe(options: ObserveOptions): Promise<ObserveResult> {
   //                    child is spawned as execPath already.
   //   `agent.js`        a script invoked directly; Node has to run it.
   //   `python x.py`     not Node at all, so no preload.
+  //
+  // Note the non-Node branch passes `args` alone. `spawn` fills in `argv[0]`
+  // from `childProgram` by itself, so repeating the program name turned
+  // `sh -c "exit 0"` into `sh sh -c "exit 0"`: sh treated the second `sh` as a
+  // script filename, failed to open it, and the caller saw exit 2 for a command
+  // that succeeded. The agent's real exit code was unrecoverable from the
+  // outside, which is the one thing `shipready observe` must never get wrong.
   const childProgram = isNodeRuntime || isScript ? process.execPath : program!;
   const childArgs =
-    isNodeRuntime || isScript ? ['--require', preload, ...(isScript ? [program!] : []), ...args] : [program!, ...args];
+    isNodeRuntime || isScript ? ['--require', preload, ...(isScript ? [program!] : []), ...args] : args;
 
   const started = Date.now();
 
@@ -398,12 +408,20 @@ function stripObserverLines(stderr: string): string {
 /**
  * Split a command string into argv.
  *
- * Handles single and double quotes and backslash escapes, which is enough for
- * every agent command anyone actually types. It deliberately does not attempt
- * to be a shell: `shipready observe -- node app.js` should run `node app.js`, not
- * hand a string to `/bin/sh`.
+ * Handles single and double quotes. It deliberately does not attempt to be a
+ * shell: `shipready observe -- node app.js` should run `node app.js`, not hand a
+ * string to `/bin/sh`. So backslash is NOT an escape character -- every agent
+ * command anyone types on Windows contains a backslash path, and treating `\U`
+ * as `U` silently produces "Cannot find module C:Users...".
+ *
+ * The complication is unquoted paths containing spaces. A Windows install
+ * directory like `C:\Users\Jane Doe\bin\bash.exe` is two tokens under naive
+ * splitting, and the first is spawned as a directory: the command does not run
+ * and the real exit code is lost. So a token that is an existing file is never
+ * split -- its trailing words are pulled back in. That resolves the common case
+ * exactly, without trying to be a shell about the rest.
  */
-export function parseCommand(input: string): string[] {
+export function parseCommand(input: string, cwd: string = process.cwd()): string[] {
   const argv: string[] = [];
   let current = '';
   let quote: string | null = null;
@@ -411,9 +429,6 @@ export function parseCommand(input: string): string[] {
 
   for (let i = 0; i < input.length; i++) {
     const ch = input[i]!;
-    // Backslash is NOT an escape character here. Every agent command anyone
-    // types on Windows contains a backslash path, and treating `\U` as `U`
-    // silently produces "Cannot find module C:Users...".
     if (quote) {
       if (ch === quote) quote = null;
       else current += ch;
@@ -425,7 +440,21 @@ export function parseCommand(input: string): string[] {
       continue;
     }
     if (/\s/.test(ch)) {
-      if (started || current.length > 0) argv.push(current);
+      if (started || current.length > 0) {
+        // A file that exists wins over the whitespace: keep consuming until the
+        // program name is a real file on disk, so a path with a space in it
+        // survives. Stops at a non-existent first token, which is the ordinary
+        // case (`node app.js`), so behaviour is unchanged for everything else.
+        const joined = absorbExistingPath(input, i, current, cwd);
+        if (joined !== null) {
+          argv.push(joined.path);
+          i = joined.nextIndex;
+          current = '';
+          started = false;
+          continue;
+        }
+        argv.push(current);
+      }
       current = '';
       started = false;
       continue;
@@ -435,6 +464,83 @@ export function parseCommand(input: string): string[] {
   }
   if (started || current.length > 0) argv.push(current);
   return argv;
+}
+
+/**
+ * Extend a candidate program token across whitespace while a longer existing
+ * file can still be formed.
+ *
+ * Returns null when nothing longer resolves, which is the ordinary case and
+ * means the caller should just push the bare token.
+ *
+ * The rule is "take the longest prefix that names a real file", not "stop at
+ * the first one that does". A directory junction is a real file to `statSync`
+ * and would otherwise end the search one word early, which is exactly the case
+ * that broke here: `C:/Users/3tee` exists, so the naive check stopped and the
+ * agent was spawned as a directory. Trying the next word and preferring the
+ * longest hit resolves it without guessing.
+ *
+ * Bounded to a few segments. A program path is never longer, and an unbounded
+ * search would swallow the whole command line.
+ */
+function absorbExistingPath(
+  input: string,
+  from: number,
+  candidate: string,
+  cwd: string,
+): { path: string; nextIndex: number } | null {
+  const MAX_SEGMENTS = 6;
+  let path = candidate;
+  let i = from;
+  let best = isExistingFile(candidate, cwd) ? { path: candidate, nextIndex: from - 1 } : null;
+
+  for (let extra = 0; extra < MAX_SEGMENTS; extra++) {
+    // Skip the whitespace that separated the previous segment.
+    while (i < input.length && /\s/.test(input[i]!)) i++;
+    if (i >= input.length) break;
+
+    const start = i;
+    while (i < input.length && !/\s/.test(input[i]!)) i++;
+    const next = `${path} ${input.slice(start, i)}`;
+
+    // Keep the last (longest) hit, so a directory junction earlier in the path
+    // cannot win over the real executable further along.
+    if (isExistingFile(next, cwd)) best = { path: next, nextIndex: i - 1 };
+    path = next;
+  }
+
+  // Only rejoin when the token was genuinely broken, i.e. the bare first token
+  // was not itself the program.
+  return best && best.path !== candidate ? best : null;
+}
+
+/**
+ * True when `p` names an existing file.
+ *
+ * Guards against a bare command name that happens to collide with a file, and
+ * against the `.exe` suffix Windows needs but nobody types.
+ *
+ * Resolution is relative to the *child's* cwd, not ours. The agent is spawned
+ * with `cwd` set, so `node app.js` in the command line refers to a file next to
+ * the agent, and checking against our own directory would miss it and then
+ * wrongly rejoin the next word into the program path.
+ */
+function isExistingFile(p: string, cwd: string): boolean {
+  if (p === '' || p.includes('*') || p.includes('?')) return false;
+  // Absolute paths are resolved by the OS as given. Relative ones have to be
+  // joined to the child's directory or we look in the wrong place.
+  const forms = isAbsolute(p) ? [p] : [resolve(cwd, p)];
+  const candidates =
+    process.platform === 'win32'
+      ? forms.flatMap((f) => [f, `${f}.exe`, `${f}.cmd`, `${f}.bat`])
+      : forms;
+  return candidates.some((c) => {
+    try {
+      return statSync(c, { throwIfNoEntry: false })?.isFile() === true;
+    } catch {
+      return false;
+    }
+  });
 }
 
 /** True for a path or bare name that Node would run directly. */

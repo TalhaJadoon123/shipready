@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
-import { existsSync } from 'node:fs';
-import { join, dirname } from 'node:path';
+import { existsSync, mkdirSync, writeFileSync } from 'node:fs';
+import { join, dirname, resolve } from 'node:path';
 import { tmpdir } from 'node:os';
 import { observe, parseCommand, TraceStore } from '../src/index.js';
 
@@ -47,6 +47,46 @@ describe('parseCommand', () => {
 
   it('returns nothing for an empty string', () => {
     expect(parseCommand('')).toEqual([]);
+  });
+
+  it('rejoins an unquoted program path broken by a space', () => {
+    // Regression: an install under `C:\Users\Jane Doe\` splits into two tokens
+    // and the first gets spawned as a directory, so the command silently fails
+    // and the real exit code is lost. A file that exists wins over whitespace.
+    const dirWithSpace = join(dir, 'bin tools');
+    mkdirSync(dirWithSpace, { recursive: true });
+    const exe = join(dirWithSpace, 'agent-runner');
+    writeFileSync(exe, 'x', 'utf8');
+
+    expect(parseCommand(`${exe} --flag`, dir)).toEqual([exe, '--flag']);
+  });
+
+  it('resolves a relative program against the given cwd, not the process cwd', () => {
+    // Regression: checking existence against our own directory would miss the
+    // agent's local script and then swallow the following word into the path.
+    mkdirSync(join(dir, 'my tools'), { recursive: true });
+    const exe = join(dir, 'my tools', 'runner');
+    writeFileSync(exe, 'x', 'utf8');
+
+    // The token is returned as typed, not rewritten to an absolute path: the
+    // command line belongs to the user. What matters is that it rejoined.
+    const argv = parseCommand('./my tools/runner --flag', dir);
+    expect(argv).toEqual(['./my tools/runner', '--flag']);
+    expect(resolve(dir, argv[0]!)).toBe(exe);
+  });
+
+  it('leaves an ordinary command alone even when a matching file exists', () => {
+    // `node app.js` where a file named `node` sits in the cwd must still split
+    // on the space; rejoin only fires when a *longer* existing file is found.
+    writeFileSync(join(dir, 'python'), 'x', 'utf8');
+    expect(parseCommand('python agent.py', dir)).toEqual(['python', 'agent.py']);
+  });
+
+  it('does not rejoin when no longer prefix is a real file', () => {
+    expect(parseCommand('C:' + String.fromCharCode(92) + 'No' + String.fromCharCode(92) + 'Such' + String.fromCharCode(92) + 'x.exe --flag', dir)).toEqual([
+      'C:' + String.fromCharCode(92) + 'No' + String.fromCharCode(92) + 'Such' + String.fromCharCode(92) + 'x.exe',
+      '--flag',
+    ]);
   });
 });
 
@@ -94,6 +134,21 @@ describe('observe', () => {
     expect(result.instrumented).toBe(false);
     expect(result.reason).toContain('not a Node program');
     expect(result.trace).toBeNull();
+  }, 60_000);
+
+  it("propagates a non-Node program's own exit code", async () => {
+    // Regression: the program name was repeated as the first argument, so
+    // `sh -c "exit 0"` ran as `sh sh -c "exit 0"`, sh looked for a script named
+    // `sh`, and the caller got 2 from a command that actually succeeded. Exit
+    // codes are the one thing this command must never get wrong.
+    const nonZero = process.platform === 'win32' ? 'cmd.exe /c exit 4' : 'sh -c "exit 4"';
+    const ok = process.platform === 'win32' ? 'cmd.exe /c exit 0' : 'sh -c "exit 0"';
+
+    const failed = await observe({ command: nonZero, dbPath, cwd: dir });
+    const succeeded = await observe({ command: ok, dbPath, cwd: dir });
+
+    expect(failed.exitCode).toBe(4);
+    expect(succeeded.exitCode).toBe(0);
   }, 60_000);
 
   it('rejects an empty command', async () => {
