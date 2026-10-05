@@ -116,6 +116,15 @@ export const errorHandlingRules: Rule[] = [
           const callHit = /^\s*([A-Za-z_$][\w$.]*)\s*\(\s*[^;]*\)\s*;?\s*$/.exec(code);
           if (!callHit) continue;
           const callee = callHit[1]!;
+          // `process.on(...)`, `process.stdout.write(...)` and friends are
+          // synchronous: they register a listener or return a boolean.
+          // Instrumenting process output is exactly what an observed process
+          // should be doing, and reporting it is the kind of finding that makes
+          // a team disable the rule wholesale. `write` matching the async-name
+          // test below is what pulls these in.
+          if (/^(?:process|console|emitter|bus|events|router|app)(?:\.\w+)*\.(?:on|once|off|addListener|write|end|log|info|warn|error|debug)$/.test(callee)) {
+            continue;
+          }
           if (!/(?:^|\.)(?:then|next|setImmediate|setTimeout|emit|on|addEventListener|useEffect)$/.test(callee)) continue;
           if (!/^(?:async\s+)?[\w$.]*(?:Async|Fetch|Save|Update|Delete|Create|Send|Sync|Upload|Store|Write|Persist|Process|Emit|Dispatch|Enqueue|Queue|Notify|Index|Embed|Generate)/i.test(callee)) continue;
           if (file.hasExplanatoryCommentNear(line, ['fire and forget', 'fire-and-forget', 'best effort', 'ignore', 'non-blocking', 'shipready-ignore', 'intentional'])) continue;

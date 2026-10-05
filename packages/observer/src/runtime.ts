@@ -333,12 +333,25 @@ function installExitHandlers(recorder: TraceRecorder): void {
   const flush = (code: number): void => {
     const current = state();
     if (!current || current.recorder.isEnded) return;
+
+    // End the trace before writing, so a failure to write cannot leave it
+    // open and cause `flush` to run again on the way out.
     const trace = recorder.end(code);
-    if (current.options.jsonl) {
-      process.stderr.write(`${JSON.stringify({ type: 'trace', summary: trace.summary })}\n`);
+    if (!current.options.jsonl) {
+      // The store is opened lazily by the parent process; the child only writes
+      // JSONL, which keeps the preload dependency-free.
+      return;
     }
-    // The store is opened lazily by the parent process; the child only writes
-    // JSONL, which keeps the preload dependency-free.
+
+    // Nothing here may throw. An exception inside an `exit` handler is
+    // unhandled, and inside a signal handler it swallows the exit code, so a
+    // crashing agent could take the observer down with it -- which is exactly
+    // the failure the observer exists to record.
+    try {
+      process.stderr.write(`${JSON.stringify({ type: 'trace', summary: trace.summary })}\n`);
+    } catch {
+      // A closed or broken stderr is not worth failing the process over.
+    }
   };
 
   process.on('exit', (code) => flush(code));

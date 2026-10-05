@@ -85,6 +85,35 @@ describe('error handling checks', () => {
     expect(finding!.location.startLine).toBeGreaterThan(0);
   });
 
+  it('does not report process output as a discarded promise', async () => {
+    // `process.stdout.write(...)` returns a boolean and `process.on(...)`
+    // returns the emitter. Both are synchronous. `write` matches the rule's
+    // async-name test, so without an explicit exclusion the rule reported the
+    // observer's own event log -- and a scanner that flags its own
+    // instrumentation is one people switch off.
+    const root = await makeRepo({
+      name: 'instrumentation',
+      files: [
+        { path: 'package.json', content: '{"name":"i","dependencies":{"express":"4.18.2"}}' },
+        {
+          path: 'src/exit.ts',
+          content: [
+            'function flush(code) {',
+            '  process.stderr.write(`done ${code}\\n`);',
+            '}',
+            'process.on("exit", (code) => flush(code));',
+          ].join('\n'),
+        },
+      ],
+    });
+    try {
+      const report = await scan(root);
+      expect(findingsFor(report, 'readiness/error-handling/unhandled-promise')).toHaveLength(0);
+    } finally {
+      await removeRepo(root);
+    }
+  });
+
   it('reports the bare except in python', async () => {
     const root = await makeRepo({
       name: 'py',
