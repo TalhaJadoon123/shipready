@@ -1,5 +1,6 @@
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import { mkdtemp, rm } from 'node:fs/promises';
+import { unlinkSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createDefaultRegistry, runScan, type ProductionReadinessReport } from '@shipready/core';
@@ -350,7 +351,11 @@ describe('traces, compliance and invoices', () => {
 describe('the file-backed store', () => {
   beforeEach(() => {
     process.env.SHIPREADY_DATABASE = 'memory';
-    process.env.SHIPREADY_MEMORY_PATH = join(dir, 'nested', 'dashboard.json');
+    const path = join(dir, 'nested', 'dashboard.json');
+    process.env.SHIPREADY_MEMORY_PATH = path;
+    // Each test must start from a clean file; the previous test may have left
+    // nextScanId advanced, which would make id assertions fail.
+    try { unlinkSync(path); } catch {}
   });
 
   it('writes a snapshot and reads it back in a fresh handle', async () => {
