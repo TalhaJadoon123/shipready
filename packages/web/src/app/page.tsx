@@ -1,3 +1,4 @@
+import type { ReactElement } from 'react';
 import {
   currentDriver,
   listCompliance,
@@ -44,11 +45,25 @@ interface CategoryView {
   weight: number;
 }
 
+/**
+ * Next requires a statically analysable prop type, and TypeScript cannot name
+ * the return type of a component whose JSX references React's namespace.
+ *
+ * The annotation is not cosmetic: without it the declaration emits
+ * `.pnpm/@types+react@18.3.31/...` into `dist/`, because @shipready/observer
+ * pins React 18 while this package is on 19. That resolves on a machine with one
+ * hoisted copy and fails on a clean install, which is exactly how it passed
+ * locally and broke in CI.
+ *
+ * `ReactElement` is imported from `react` rather than spelled as
+ * `React.JSX.Element`: the emitted declaration then refers to this package's own
+ * React types instead of whichever version of @types/react pnpm resolved.
+ */
 export default async function Dashboard({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}) {
+}): Promise<ReactElement> {
   const params = await searchParams;
   const projectId = typeof params.project === 'string' ? params.project : 'acme-ai-dashboard';
 
