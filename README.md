@@ -212,6 +212,28 @@ detections. Run `pnpm -r test`.
 
 ---
 
+## Dashboard
+
+The dashboard shows the readiness trend, agent cost, compliance status and
+invoice history.
+
+```bash
+pnpm desktop          # build if needed, seed, start, open your browser
+```
+
+`--port 4000` to move it, `--no-open` to skip the browser, `--reset` to
+regenerate the demo data.
+
+The demo data is not fabricated: it comes from really scanning a synthetic
+repository that gains the file resolving one blocker per step, so the trend line
+is the scanner's output.
+
+It is a launcher rather than an Electron shell, so there is no second copy of the
+UI to keep in sync and no 200 MB dependency to patch. See
+[apps/desktop](apps/desktop/README.md).
+
+---
+
 ## Development
 
 ```bash
@@ -219,7 +241,14 @@ pnpm install
 pnpm build
 pnpm test
 pnpm --filter @shipready/core test   # the scanning engine
+
+pnpm verify:build    # clean, build, and assert every package emitted output
+pnpm verify:release  # the above + typecheck + test + pack + inspect tarballs
 ```
+
+Use `verify:build` rather than `build` when checking a fresh checkout. `tsc
+--incremental` will emit nothing and exit 0 if its buildinfo file outlives
+`dist/`, so a plain `pnpm build` can look green and produce empty packages.
 
 Self-scan, which is the check the tool asks everyone else to run:
 

@@ -53,13 +53,21 @@ describe('line access is not quadratic', () => {
     const small = new SourceFile('src/small.ts', longFile(500));
     const large = new SourceFile('src/large.ts', longFile(4000));
 
-    const t0 = performance.now();
-    readEveryLineTwice(small);
-    const smallMs = Math.max(performance.now() - t0, 0.01);
+    // Warm up and take the best of several runs, so the measurement reflects the
+    // code rather than JIT compilation and first-touch allocation.
+    const time = (f: SourceFile): number => {
+      readEveryLineTwice(f);
+      let best = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 5; run++) {
+        const start = performance.now();
+        readEveryLineTwice(f);
+        best = Math.min(best, performance.now() - start);
+      }
+      return best;
+    };
 
-    const t1 = performance.now();
-    readEveryLineTwice(large);
-    const largeMs = Math.max(performance.now() - t1, 0.01);
+    const smallMs = time(small);
+    const largeMs = time(large);
 
     // 8x the lines. Linear would be ~8x the time; quadratic would be ~64x.
     // A generous bound still catches a reintroduced re-split, which measured
@@ -68,7 +76,7 @@ describe('line access is not quadratic', () => {
     expect(
       ratio,
       `8x the lines took ${ratio.toFixed(1)}x the time (linear ~8x, quadratic ~64x)`,
-    ).toBeLessThan(30);
+    ).toBeLessThan(24);
   }, 30_000);
 
   it('returns a stable lineNoComments array across repeated calls', () => {
@@ -112,18 +120,32 @@ describe('comment lookup is indexed by line', () => {
       for (let i = 1; i <= f.lineCount; i++) f.hasExplanatoryCommentNear(i, ['deliberately']);
     };
 
-    const t0 = performance.now();
-    ask(small);
-    const smallMs = Math.max(performance.now() - t0, 0.01);
+    // Warm up first, and run each measurement several times taking the best.
+    //
+    // Without this the ratio is meaningless: the smaller file finishes in about
+    // a millisecond, so the first call is dominated by JIT compilation and lazy
+    // allocation rather than by the code under test. That produced a 56x
+    // reading for a 3x input and a flake, which is worse than no test at all --
+    // it teaches you to ignore the suite.
+    const time = (f: SourceFile): number => {
+      ask(f);
+      let best = Number.POSITIVE_INFINITY;
+      for (let run = 0; run < 5; run++) {
+        const start = performance.now();
+        ask(f);
+        best = Math.min(best, performance.now() - start);
+      }
+      return best;
+    };
 
-    const t1 = performance.now();
-    ask(large);
-    const largeMs = Math.max(performance.now() - t1, 0.01);
+    const smallMs = time(small);
+    const largeMs = time(large);
 
     // Both files carry a comment on roughly every other line, so this is the
-    // case a linear scan over all comments would make quadratic.
+    // case a linear scan over all comments would make quadratic. Linear is 3x;
+    // quadratic is 9x. 6x separates the two with room for a noisy machine.
     const ratio = largeMs / smallMs;
-    expect(ratio, `3x the lines took ${ratio.toFixed(1)}x the time`).toBeLessThan(20);
+    expect(ratio, `3x the lines took ${ratio.toFixed(1)}x the time`).toBeLessThan(6);
   }, 30_000);
 
   it('still honours suppression comments', () => {

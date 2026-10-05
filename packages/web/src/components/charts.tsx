@@ -9,6 +9,20 @@
  * the chart rather than a spinner.
  */
 
+import type { JSX } from 'react';
+
+/**
+ * Every component below returns `ReactElement` explicitly.
+ *
+ * Without the annotation TypeScript infers the return type and emits it into
+ * the declaration file, where the JSX namespace it references resolves against
+ * whichever copy of @types/react the package manager hoisted. Locally that is
+ * one copy and the build passes; on a clean install it can be two, and the
+ * emitted reference stops being portable. This cost a CI run and a fix to the
+ * dashboard component, so the remaining seven are annotated rather than waiting
+ * for the same failure to find them one at a time.
+ */
+
 export interface RadarDatum {
   label: string;
   score: number;
@@ -43,7 +57,7 @@ export function verdictTone(verdict: string): string {
  * first thing on the screen and the thing your eye returns to. The tick marks
  * at the verdict boundaries turn it into an instrument rather than a gauge.
  */
-export function ScoreRing({ score, grade }: { score: number; grade: string }) {
+export function ScoreRing({ score, grade }: { score: number; grade: string }): JSX.Element {
   const size = 148;
   const stroke = 11;
   const radius = (size - stroke) / 2 - 2;
@@ -104,7 +118,7 @@ export function ScoreRing({ score, grade }: { score: number; grade: string }) {
  * A codebase can score 90 with one category at 20, and a bar chart hides that
  * while a radar makes it the most obvious thing on the screen.
  */
-export function RadarChart({ categories }: { categories: RadarDatum[] }) {
+export function RadarChart({ categories }: { categories: RadarDatum[] }): JSX.Element {
   if (categories.length < 3) {
     return <div className="empty">Not enough categories for a radar view.</div>;
   }
@@ -169,7 +183,7 @@ export function RadarChart({ categories }: { categories: RadarDatum[] }) {
 }
 
 /** The score over time, with a shaded area and a verdict threshold line. */
-export function TrendChart({ points }: { points: TrendPoint[] }) {
+export function TrendChart({ points }: { points: TrendPoint[] }): JSX.Element {
   if (points.length < 2) {
     return <div className="empty">Two or more scans are needed to show a trend.</div>;
   }
@@ -258,7 +272,7 @@ export function TrendChart({ points }: { points: TrendPoint[] }) {
 }
 
 /** Horizontal severity distribution. */
-export function SeverityBars({ counts }: { counts: Record<string, number> }) {
+export function SeverityBars({ counts }: { counts: Record<string, number> }): JSX.Element {
   const order = ['critical', 'high', 'medium', 'low', 'info'] as const;
   const total = order.reduce((sum, k) => sum + (counts[k] ?? 0), 0);
   if (total === 0) return <div className="empty">No findings.</div>;
@@ -292,7 +306,7 @@ export function SeverityBars({ counts }: { counts: Record<string, number> }) {
 }
 
 /** A compact per-category bar list, sorted worst first. */
-export function CategoryBars({ categories }: { categories: RadarDatum[] }) {
+export function CategoryBars({ categories }: { categories: RadarDatum[] }): JSX.Element {
   const sorted = [...categories].sort((a, b) => a.score - b.score);
   return (
     <div className="cat-list">
@@ -323,7 +337,7 @@ export function ActivityHeatmap({
   buckets,
 }: {
   buckets: { llm: number; tool: number; network: number; error: number }[];
-}) {
+}): JSX.Element {
   if (buckets.length === 0) return <div className="empty">No activity recorded.</div>;
   const max = Math.max(1, ...buckets.map((b) => b.llm + b.tool + b.network + b.error));
   return (
@@ -378,7 +392,7 @@ export function ActivityHeatmap({
 }
 
 /** A cost-per-day column chart. */
-export function CostChart({ days }: { days: { day: string; costUsd: number }[] }) {
+export function CostChart({ days }: { days: { day: string; costUsd: number }[] }): JSX.Element {
   if (days.length === 0) return <div className="empty">No cost recorded yet.</div>;
   const max = Math.max(...days.map((d) => d.costUsd), 0.0001);
   const width = 620;
@@ -421,7 +435,7 @@ export function CostChart({ days }: { days: { day: string; costUsd: number }[] }
 export function shortLabel(label: string, max = 16): string {
   const words = label.replace(/-/g, ' ');
   if (words.length <= max) return words;
-  return words.slice(0, max - 1) + '…';
+  return words.slice(0, max - 1) + 'Ã¢â‚¬Â¦';
 }
 
 export function formatDay(iso: string): string {

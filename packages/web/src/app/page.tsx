@@ -1,4 +1,4 @@
-import type { ReactElement } from 'react';
+import type { JSX } from 'react';
 import {
   currentDriver,
   listCompliance,
@@ -55,15 +55,16 @@ interface CategoryView {
  * hoisted copy and fails on a clean install, which is exactly how it passed
  * locally and broke in CI.
  *
- * `ReactElement` is imported from `react` rather than spelled as
- * `React.JSX.Element`: the emitted declaration then refers to this package's own
- * React types instead of whichever version of @types/react pnpm resolved.
+ * `JSX` is imported from `react` rather than spelled as the bare global
+ * `JSX.Element`, which React 19 removed. The emitted declaration then refers to
+ * this package's own React types instead of whichever version of @types/react
+ * pnpm resolved.
  */
 export default async function Dashboard({
   searchParams,
 }: {
   searchParams: Promise<Record<string, string | string[] | undefined>>;
-}): Promise<ReactElement> {
+}): Promise<JSX.Element> {
   const params = await searchParams;
   const projectId = typeof params.project === 'string' ? params.project : 'acme-ai-dashboard';
 

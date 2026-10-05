@@ -1,0 +1,10 @@
+{
+  "name": "shipready-desktop",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Desktop launcher for the ShipReady dashboard. Opens the local dashboard in your browser and seeds demo data on first run.",
+  "type": "module",
+  "scripts": {
+    "start": "node scripts/launch.mjs"
+  }
+}
