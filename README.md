@@ -2,6 +2,10 @@
 
 **Vibe-coded. Production-proven.**
 
+[![CI](https://github.com/TalhaJadoon123/shipready/actions/workflows/ci.yml/badge.svg)](https://github.com/TalhaJadoon123/shipready/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE)
+[![Node](https://img.shields.io/badge/node-%3E%3D20.10-5FA04E)](package.json)
+
 The production-readiness layer for AI-built software. It answers one question and
 then proves the answer:
 
