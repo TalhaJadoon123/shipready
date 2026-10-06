@@ -349,13 +349,19 @@ describe('traces, compliance and invoices', () => {
  * would pass even if nothing was ever written.
  */
 describe('the file-backed store', () => {
-  beforeEach(() => {
+  beforeEach(async () => {
     process.env.SHIPREADY_DATABASE = 'memory';
     const path = join(dir, 'nested', 'dashboard.json');
     process.env.SHIPREADY_MEMORY_PATH = path;
     // Each test must start from a clean file; the previous test may have left
     // nextScanId advanced, which would make id assertions fail.
     try { unlinkSync(path); } catch {}
+    // The database handle is cached globally. The previous describe block used
+    // a different SHIPREADY_MEMORY_PATH (''), so its cached database has the
+    // wrong file path and an advanced nextScanId. Clear the cache so this
+    // block gets a fresh database that reads the correct (empty) file.
+    const { resetDb } = await import('../db/client.js');
+    resetDb();
   });
 
   it('writes a snapshot and reads it back in a fresh handle', async () => {
