@@ -4,15 +4,15 @@ services:
     container_name: shipready-postgres
     restart: unless-stopped
     environment:
-      POSTGRES_USER: shipready
-      POSTGRES_PASSWORD: shipready
-      POSTGRES_DB: shipready
+      POSTGRES_USER: ${POSTGRES_USER:-shipready}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB:-shipready}
     ports:
       - '5432:5432'
     volumes:
       - shipready-pgdata:/var/lib/postgresql/data
     healthcheck:
-      test: ['CMD-SHELL', 'pg_isready -U shipready -d shipready']
+      test: ['CMD-SHELL', 'pg_isready -U ${POSTGRES_USER:-shipready} -d ${POSTGRES_DB:-shipready}']
       interval: 5s
       timeout: 5s
       retries: 10
@@ -21,13 +21,13 @@ services:
     image: redis:7-alpine
     container_name: shipready-redis
     restart: unless-stopped
-    command: ['redis-server', '--appendonly', 'yes']
+    command: ['redis-server', '--appendonly', 'yes', '--requirepass', '${REDIS_PASSWORD}']
     ports:
       - '6379:6379'
     volumes:
       - shipready-redisdata:/data
     healthcheck:
-      test: ['CMD', 'redis-cli', 'ping']
+      test: ['CMD', 'redis-cli', '-a', '${REDIS_PASSWORD}', 'ping']
       interval: 5s
       timeout: 5s
       retries: 10

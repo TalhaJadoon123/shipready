@@ -289,10 +289,11 @@ export function createMemoryDatabase() {
     },
 
     async listScans(projectId: string, limit = 50) {
+      const capped = Math.min(limit, 1000);
       return scans
         .filter((s) => s.projectId === projectId)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-        .slice(0, limit);
+        .slice(0, capped);
     },
 
     async latestScan(projectId: string) {
@@ -301,15 +302,17 @@ export function createMemoryDatabase() {
     },
 
     async listFindings(scanId: number, limit = 500) {
+      const capped = Math.min(limit, 1000);
       const scan = scans.find((s) => s.id === scanId);
-      return (scan?.findings ?? []).slice(0, limit);
+      return (scan?.findings ?? []).slice(0, capped);
     },
 
     async trends(projectId: string, limit = 60): Promise<TrendPoint[]> {
+      const capped = Math.min(limit, 1000);
       return scans
         .filter((s) => s.projectId === projectId)
         .sort((a, b) => a.createdAt.getTime() - b.createdAt.getTime())
-        .slice(-limit)
+        .slice(-capped)
         .map((s) => ({ at: s.createdAt.toISOString(), score: s.score, blockers: s.blockers }));
     },
 
@@ -339,10 +342,11 @@ export function createMemoryDatabase() {
     },
 
     listTraces(projectId: string, limit = 50) {
+      const capped = Math.min(limit, 1000);
       return traces
         .filter((t) => t.projectId === projectId)
         .sort((a, b) => b.startedAt.getTime() - a.startedAt.getTime())
-        .slice(0, limit);
+        .slice(0, capped);
     },
 
     // --- Compliance -------------------------------------------------------
@@ -367,10 +371,11 @@ export function createMemoryDatabase() {
     },
 
     listCompliance(projectId: string, limit = 20) {
+      const capped = Math.min(limit, 1000);
       return compliance
         .filter((c) => c.projectId === projectId)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-        .slice(0, limit);
+        .slice(0, capped);
     },
 
     // --- Invoices ---------------------------------------------------------
@@ -408,10 +413,11 @@ export function createMemoryDatabase() {
     },
 
     listInvoices(projectId: string, limit = 50) {
+      const capped = Math.min(limit, 1000);
       return invoices
         .filter((i) => !projectId || i.projectId === projectId)
         .sort((a, b) => b.createdAt.getTime() - a.createdAt.getTime())
-        .slice(0, limit);
+        .slice(0, capped);
     },
 
     async close(): Promise<void> {},

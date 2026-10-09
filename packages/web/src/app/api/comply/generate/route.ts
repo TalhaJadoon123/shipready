@@ -13,6 +13,7 @@ import {
 } from '@shipready/compliance';
 import { parse, isError, postComplianceSchema } from '../../../../lib/api-schema.js';
 import { listCompliance, storeCompliance } from '../../../../lib/store.js';
+import { rateLimit, addRateLimitHeaders } from '../../../../lib/rate-limit.js';
 
 /**
  * POST /api/comply/generate
@@ -25,11 +26,14 @@ import { listCompliance, storeCompliance } from '../../../../lib/store.js';
  * needs in order to trend compliance readiness over time.
  */
 export async function POST(request: Request): Promise<Response> {
+  const rl = rateLimit(request as NextRequest, '/api/comply/generate');
+  if (!rl.allowed) return rl.response!;
+
   let body: unknown;
   try {
     body = await request.json();
   } catch {
-    return NextResponse.json({ error: 'body must be JSON' }, { status: 400 });
+    return addRateLimitHeaders(NextResponse.json({ error: 'body must be JSON' }, { status: 400 }), rl);
   }
 
   // The envelope is validated separately from the answers: the answers are a
@@ -51,12 +55,12 @@ export async function POST(request: Request): Promise<Response> {
         documentCount: Number(pack.documentCount ?? 0),
       },
     });
-    return NextResponse.json({ ok: true, complianceId: stored.complianceId }, { status: 201 });
+    return addRateLimitHeaders(NextResponse.json({ ok: true, complianceId: stored.complianceId }, { status: 201 }), rl);
   }
 
   const answers = (body as { answer?: ComplianceAnswer }).answer;
   if (!answers || typeof answers !== 'object') {
-    return NextResponse.json({ error: 'answer is required' }, { status: 400 });
+    return addRateLimitHeaders(NextResponse.json({ error: 'answer is required' }, { status: 400 }), rl);
   }
 
   const result = generate(answers as ComplianceAnswer);
@@ -67,30 +71,36 @@ export async function POST(request: Request): Promise<Response> {
   const gaps = result.gaps.length > 0 ? result.gaps : findGaps(answers as ComplianceAnswer);
   const bundle = bundleFor(body as { format?: string }, result, manifest);
 
-  return NextResponse.json({
-    frameworks: inferFrameworks(answers as ComplianceAnswer),
-    documents: result.documents.map((document) => ({
-      id: document.id,
-      title: document.title,
-      reference: document.reference,
-      gapCount: document.gaps.length,
-      unresolved: document.unresolved,
-      ...(bundle ? { content: renderDocument(bundle, document.id) } : { markdown: document.content }),
-    })),
-    gaps,
-    score: result.score,
-    report: formatComplianceReport(
-      buildDashboardShim(result, gaps),
-    ),
-  });
+  return addRateLimitHeaders(
+    NextResponse.json({
+      frameworks: inferFrameworks(answers as ComplianceAnswer),
+      documents: result.documents.map((document) => ({
+        id: document.id,
+        title: document.title,
+        reference: document.reference,
+        gapCount: document.gaps.length,
+        unresolved: document.unresolved,
+        ...(bundle ? { content: renderDocument(bundle, document.id) } : { markdown: document.content }),
+      })),
+      gaps,
+      score: result.score,
+      report: formatComplianceReport(
+        buildDashboardShim(result, gaps),
+      ),
+    }),
+    rl,
+  );
 }
 
 /** GET /api/comply/generate?projectId=... — pack history. */
 export async function GET(request: Request): Promise<Response> {
+  const rl = rateLimit(request as NextRequest, '/api/comply/generate');
+  if (!rl.allowed) return rl.response!;
+
   const url = new URL(request.url);
   const projectId = url.searchParams.get('projectId') ?? '';
   const packs = await listCompliance(projectId, 20);
-  return NextResponse.json({ packs, latest: packs[0] ?? null });
+  return addRateLimitHeaders(NextResponse.json({ packs, latest: packs[0] ?? null }), rl);
 }
 
 function bundleFor(

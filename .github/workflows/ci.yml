@@ -38,6 +38,11 @@ jobs:
       # rather than silently resolving something the repo never tested.
       - run: pnpm install --frozen-lockfile
 
+      # Dependency vulnerability audit. Fails on high/critical CVEs in production deps.
+      # devDependencies are audited but don't fail the build (they don't ship).
+      - name: Audit production dependencies
+        run: pnpm audit --prod --audit-level high
+
       # The gate that matters most. `verify:build` cleans first and asserts that
       # every package actually emitted output, because `tsc --incremental` will
       # happily emit nothing and exit 0 when its buildinfo outlives dist/.
@@ -57,32 +62,86 @@ jobs:
       - name: Pack and inspect
         run: pnpm pack:all
 
+      # Verifies every number quoted in investor materials that is marked [verified].
+      # If this fails, the pitch deck has drifted from reality.
+      - name: Verify investor claims
+        run: node docs/investor/verify-claims.mjs
+
       - uses: actions/upload-artifact@v4
         if: always()
         with:
           name: shipready-tarballs-node${{ matrix.node }}
           path: .artifacts/*.tgz
 
+  # Reported, not enforced. This repository currently scores 58/100 with 11 real
+  # blockers, so a threshold that gates would be permanently red and teach
+  # everyone to ignore a red build. The debt is listed in
+  # docs/investor/LAUNCH.md; the threshold is raised to gate once it is paid.
+  #
+  # `continue-on-error` is what makes "not enforced" true rather than aspirational.
+  # An informational job that can turn the pipeline red is worse than no job: it
+  # trains people to click through red, which is exactly what this job exists to
+  # avoid.
   shipready:
     name: ShipReady readiness gate
     runs-on: ubuntu-latest
     needs: verify
-    timeout-minutes: 10
+    timeout-minutes: 15
+    continue-on-error: true
+    permissions:
+      contents: read
+      security-events: write
     steps:
       - uses: actions/checkout@v4
+
+      - uses: pnpm/action-setup@v4
+
       - uses: actions/setup-node@v4
         with:
           node-version: 22
+          cache: pnpm
 
-      # Reported, not enforced. This repository currently scores 58/100 with 11
-      # real blockers, so a threshold that gates would be permanently red and
-      # teach everyone to ignore a red build. The debt is listed in
-      # docs/investor/LAUNCH.md; the threshold is raised to gate once it is paid.
+      - run: pnpm install --frozen-lockfile
+
+      # The CLI entry point imports `../dist/program.js`, so a bare checkout
+      # cannot scan anything: Node throws ERR_MODULE_NOT_FOUND before the CLI
+      # gets a chance to run. Building only the CLI and its dependency graph
+      # (`@shipready/cli...`) is enough to produce SARIF and skips the Next.js
+      # dashboard build, which this job has no use for.
+      - name: Build the CLI
+        run: pnpm --filter "@shipready/cli..." build
+
+      # `--fail-on never` makes a clean exit the *designed* outcome instead of a
+      # failure hidden behind `|| true`. That distinction matters: `|| true`
+      # swallows a real crash and the job still looks green, whereas here a
+      # crash leaves the step red and visible while the job stays non-blocking.
       - name: Readiness scan (reported, not enforced)
         run: |
           node packages/cli/bin/shipready.mjs scan . \
             --format sarif \
-            --output shipready.sarif || true
+            --output shipready.sarif \
+            --fail-on never
+
+      # Both upload steps run under `if: always()`, so they also run when the scan
+      # crashed and no file was written. An empty-but-valid SARIF document keeps
+      # them from failing on a missing file, which is what turned this job red
+      # while the scan itself had never actually run.
+      #
+      # Written with printf rather than a here-doc on purpose: a here-doc needs its
+      # terminator to align with the `run: |` block indentation, and a future
+      # reindent would silently break it. Single quotes preserve the newlines and
+      # the `$schema` URL verbatim.
+      - name: Guarantee a SARIF document exists
+        if: always()
+        run: |
+          if [ ! -s shipready.sarif ]; then
+            echo "::warning::The readiness scan produced no SARIF file; uploading an empty document."
+            printf '%s' '{
+            "$schema": "https://raw.githubusercontent.com/oasis-tcs/sarif-spec/master/Schemata/sarif-schema-2.1.0.json",
+            "version": "2.1.0",
+            "runs": []
+          }' > shipready.sarif
+          fi
 
       - uses: github/codeql-action/upload-sarif@v3
         if: always()

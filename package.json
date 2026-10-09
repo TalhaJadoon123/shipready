@@ -26,8 +26,7 @@
     "pack:all": "node scripts/pack-all.mjs",
     "verify:release": "pnpm verify:build && pnpm -r typecheck && pnpm -r test && pnpm pack:all",
     "shipready": "node packages/cli/bin/shipready.mjs",
-    "desktop": "node apps/desktop/scripts/launch.mjs",
-    "prepare": "husky || true"
+    "desktop": "node apps/desktop/scripts/launch.mjs"
   },
   "devDependencies": {
     "@types/node": "^22.10.2",

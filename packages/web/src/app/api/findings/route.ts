@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { parse, isError, findingsQuerySchema } from '../../../lib/api-schema.js';
 import { listFindings, listScans } from '../../../lib/store.js';
+import { rateLimit, addRateLimitHeaders } from '../../../lib/rate-limit.js';
 
 /**
  * GET /api/findings?projectId=...
@@ -14,6 +15,9 @@ import { listFindings, listScans } from '../../../lib/store.js';
  * question this endpoint exists to answer. Pass `scanId` to look at history.
  */
 export async function GET(request: Request): Promise<Response> {
+  const rl = rateLimit(request as NextRequest, '/api/findings');
+  if (!rl.allowed) return rl.response!;
+
   const url = new URL(request.url);
   const parsed = parse(findingsQuerySchema, {
     projectId: url.searchParams.get('projectId') ?? '',
@@ -22,7 +26,7 @@ export async function GET(request: Request): Promise<Response> {
     ...(url.searchParams.get('category') ? { category: url.searchParams.get('category') } : {}),
     ...(url.searchParams.get('limit') ? { limit: url.searchParams.get('limit') } : {}),
   });
-  if (isError(parsed)) return NextResponse.json(parsed, { status: 400 });
+  if (isError(parsed)) return addRateLimitHeaders(NextResponse.json(parsed, { status: 400 }), rl);
 
   let findings = (await listFindings(parsed.projectId, parsed.scanId, parsed.limit)) as Record<
     string,
@@ -39,12 +43,15 @@ export async function GET(request: Request): Promise<Response> {
   );
 
   const scans = await listScans(parsed.projectId, 1);
-  return NextResponse.json({
-    findings,
-    total: findings.length,
-    scanId: parsed.scanId ?? scans[0]?.id ?? null,
-    scannedAt: scans[0]?.createdAt ?? null,
-  });
+  return addRateLimitHeaders(
+    NextResponse.json({
+      findings,
+      total: findings.length,
+      scanId: parsed.scanId ?? scans[0]?.id ?? null,
+      scannedAt: scans[0]?.createdAt ?? null,
+    }),
+    rl,
+  );
 }
 
 export const runtime = 'nodejs';
