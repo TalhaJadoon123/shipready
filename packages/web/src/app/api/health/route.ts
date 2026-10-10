@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { currentDriver } from '../../../lib/store.js';
 import { DEFAULT_CI_THRESHOLD } from '../defaults.js';
 import { rateLimit, addRateLimitHeaders } from '../../../lib/rate-limit.js';

@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { validateInvoice, fixInvoice, SUPPORTED } from '@shipready/einvoice';
 import { parse, isError, validateInvoiceSchema } from '../../../lib/api-schema.js';
 import { listInvoices, storeInvoice } from '../../../lib/store.js';

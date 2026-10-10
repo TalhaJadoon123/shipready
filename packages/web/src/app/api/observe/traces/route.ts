@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { parse, isError, postTraceSchema, traceQuerySchema } from '../../../../lib/api-schema.js';
 import { listTraces, storeTrace } from '../../../../lib/store.js';
 import type { TraceRecord } from '../../../../db/client.js';

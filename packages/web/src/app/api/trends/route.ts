@@ -1,4 +1,4 @@
-import { NextResponse } from 'next/server';
+import { NextResponse, type NextRequest } from 'next/server';
 import { parse, isError, trendsQuerySchema } from '../../../lib/api-schema.js';
 import { trends, latestScan } from '../../../lib/store.js';
 import { rateLimit, addRateLimitHeaders } from '../../../lib/rate-limit.js';
