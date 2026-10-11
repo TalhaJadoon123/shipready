@@ -50,6 +50,8 @@ export { runScan, streamFindings, gradeOf, type ScanOptions, type ScanResult } f
 export { createScanContext, internals, type ScanContext } from './context.js';
 export { DEFAULT_CI_THRESHOLD, DEFAULT_FIX_LIMIT, DEFAULT_TOP_BLOCKERS } from './config.js';
 
+export { getLogger, createRequestLogger, withLogging, type LoggerOptions, type LogContext } from './logger.js';
+
 // --- Plugin registry --------------------------------------------------------
 export { PluginRegistry, defineScanner } from './registry.js';
 

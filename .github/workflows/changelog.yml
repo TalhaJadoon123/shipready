@@ -1,0 +1,53 @@
+name: Generate Changelog
+
+on:
+  push:
+    branches: [master, main]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  changelog:
+    name: Generate Changelog
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0  # Required for conventional-changelog
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Changelog
+        id: changelog
+        run: |
+          npx conventional-changelog -p angular -i CHANGELOG.md -s -r 0
+          echo "changelog_updated=true" >> $GITHUB_OUTPUT
+
+      - name: Commit Changelog
+        if: steps.changelog.outputs.changelog_updated == 'true'
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.github.com"
+          git add CHANGELOG.md
+          git commit -m "chore: update CHANGELOG.md [skip ci]"
+          git push
+
+      - name: Create Release
+        if: github.ref == 'refs/heads/master' && steps.changelog.outputs.changelog_updated == 'true'
+        uses: softprops/action-gh-release@v1
+        with:
+          generate_release_notes: true
+          draft: false
+          prerelease: false
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

@@ -1,0 +1,182 @@
+# Dependabot Configuration
+
+# Updates weekly on Monday 06:00 UTC
+# Groups: production deps separate from dev deps
+# Auto-merge for patch/minor with passing CI
+
+version: 2
+updates:
+  # Root package.json (devDependencies)
+  - package-ecosystem: "npm"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      dev-dependencies:
+        patterns:
+          - "@types/*"
+          - "@typescript-eslint/*"
+          - "eslint*"
+          - "prettier*"
+          - "rimraf"
+          - "turbo"
+          - "typescript"
+          - "vitest"
+        update-types:
+          - "patch"
+          - "minor"
+    commit-message:
+      prefix: "chore(deps-dev)"
+      prefix-development: "chore(deps-dev)"
+    labels:
+      - "dependencies"
+      - "dev-dependencies"
+    auto-merge: true
+    allow:
+      - dependency-type: "development"
+    ignore:
+      - dependency-name: "typescript"
+        versions: [">= 6.0.0"]  # Wait for TS 6 stable
+
+  # Workspace packages (production dependencies)
+  - package-ecosystem: "npm"
+    directory: "/packages/core"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      prod-dependencies:
+        patterns:
+          - "yaml"
+        update-types:
+          - "patch"
+          - "minor"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "production"
+    auto-merge: true
+
+  - package-ecosystem: "npm"
+    directory: "/packages/cli"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      prod-dependencies:
+        patterns:
+          - "commander"
+        update-types:
+          - "patch"
+          - "minor"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "production"
+    auto-merge: true
+
+  - package-ecosystem: "npm"
+    directory: "/packages/compliance"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    auto-merge: true
+
+  - package-ecosystem: "npm"
+    directory: "/packages/einvoice"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+    auto-merge: true
+
+  - package-ecosystem: "npm"
+    directory: "/packages/observer"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      prod-dependencies:
+        patterns:
+          - "better-sqlite3"
+        update-types:
+          - "patch"
+          - "minor"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "production"
+    auto-merge: true
+
+  - package-ecosystem: "npm"
+    directory: "/packages/web"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    groups:
+      prod-dependencies:
+        patterns:
+          - "drizzle-orm"
+          - "next"
+          - "pg"
+          - "postgres"
+          - "react"
+          - "react-dom"
+          - "zod"
+        update-types:
+          - "patch"
+          - "minor"
+      dev-dependencies:
+        patterns:
+          - "@electric-sql/pglite"
+          - "@types/*"
+          - "tsx"
+        update-types:
+          - "patch"
+          - "minor"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "production"
+    auto-merge: true
+
+  # GitHub Actions
+  - package-ecosystem: "github-actions"
+    directory: "/"
+    schedule:
+      interval: "weekly"
+      day: "monday"
+      time: "06:00"
+      timezone: "UTC"
+    commit-message:
+      prefix: "chore(deps)"
+    labels:
+      - "dependencies"
+      - "github-actions"
+    auto-merge: true
