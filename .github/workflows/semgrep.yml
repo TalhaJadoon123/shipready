@@ -1,0 +1,87 @@
+name: Semgrep Security Scan
+
+on:
+  push:
+    branches: [master, main]
+  pull_request:
+    branches: [master, main]
+  schedule:
+    - cron: '0 6 * * 1'  # Weekly on Monday 06:00 UTC
+
+permissions:
+  contents: read
+  security-events: write
+
+jobs:
+  semgrep:
+    name: Semgrep Security Scan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - config: auto
+            label: "Auto (All Rules)"
+          - config: p/security-audit
+            label: "Security Audit"
+          - config: p/secrets
+            label: "Secrets Detection"
+          - config: p/ci
+            label: "CI Checks"
+          - config: .semgrep/rules/
+            label: "Project Rules"
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Setup Semgrep
+        uses: returntocorp/semgrep-action@v1
+        with:
+          config: ${{ matrix.config }}
+          generate-sarif: true
+
+      - name: Upload SARIF
+        if: always()
+        uses: github/codeql-action/upload-sarif@v3
+        with:
+          sarif_file: semgrep.sarif
+          category: semgrep-${{ matrix.label }}
+
+  semgrep-blocking:
+    name: Semgrep Blocking (ERROR severity only)
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    needs: semgrep
+    if: failure()
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: pnpm
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Run Semgrep (blocking only)
+        run: semgrep scan --config auto --error --severity ERROR --timeout 120 || true

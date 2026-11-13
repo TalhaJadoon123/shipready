@@ -1,0 +1,128 @@
+rules:
+  # API route validation
+  - id: shipready-api-missing-auth
+    patterns:
+      - pattern-either:
+          - pattern: export async function $METHOD(...) { ... }
+          - pattern: export const $METHOD = async (...) => { ... }
+      - pattern-not: auth.*
+      - pattern-inside: export async function $METHOD(request: Request, ...) { ... }
+      - pattern-inside: export const $METHOD = async (request: Request, ...) => { ... }
+    message: "API route missing authentication check. Add auth middleware."
+    languages: [typescript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-306: Missing Authentication for Critical Function"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+
+  # Rate limiting
+  - id: shipready-missing-rate-limit
+    patterns:
+      - pattern-either:
+          - pattern: export async function $METHOD(...) { ... }
+          - pattern: export const $METHOD = async (...) => { ... }
+      - pattern-not:
+          - pattern: rateLimit(...)
+          - pattern: rateLimiter(...)
+          - pattern: limiter(...)
+      - pattern-inside: export async function $METHOD(request: Request, ...) { ... }
+      - pattern-inside: export const $METHOD = async (request: Request, ...) => { ... }
+    message: "API route missing rate limiting. Add rate limiting middleware."
+    languages: [typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-770: Allocation of Resources Without Limits or Throttling"
+      owasp: "A04:2021 - Insecure Design"
+
+  # Input validation
+  - id: shipready-missing-validation
+    patterns:
+      - pattern-either:
+          - pattern: export async function $METHOD(...) { ... }
+          - pattern: export const $METHOD = async (...) => { ... }
+      - pattern-not:
+          - pattern: validate(...)
+          - pattern: schema.parse(...)
+          - pattern: schema.validate(...)
+          - pattern: z.parse(...)
+          - pattern: z.validate(...)
+          - pattern: zod.parse(...)
+          - pattern: zod.validate(...)
+      - pattern-inside: export async function $METHOD(request: Request, ...) { ... }
+      - pattern-inside: export const $METHOD = async (request: Request, ...) => { ... }
+    message: "API route missing input validation. Add Zod schema validation."
+    languages: [typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-20: Improper Input Validation"
+      owasp: "A03:2021 - Injection"
+
+  # Error handling
+  - id: shipready-missing-error-handling
+    patterns:
+      - pattern-either:
+          - pattern: export async function $METHOD(...) { ... }
+          - pattern: export const $METHOD = async (...) => { ... }
+      - pattern-not:
+          - pattern: try { ... } catch (...) { ... }
+          - pattern: try { ... } catch (error) { ... }
+      - pattern-inside: export async function $METHOD(request: Request, ...) { ... }
+      - pattern-inside: export const $METHOD = async (request: Request, ...) => { ... }
+    message: "API route missing error handling. Add try/catch block."
+    languages: [typescript]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-754: Improper Check for Unusual or Exceptional Conditions"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+
+  # CORS configuration
+  - id: shipready-cors-misconfiguration
+    patterns:
+      - pattern-either:
+          - pattern: cors({ origin: "*" })
+          - pattern: cors({ origin: true })
+          - pattern: cors({ origin: "http://localhost:*" })
+          - pattern: app.use(cors())
+          - pattern: app.use(cors({ origin: "*" }))
+    message: "Overly permissive CORS configuration. Restrict origins."
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-942: Permissive Cross-domain Policy"
+      owasp: "A05:2021 - Security Misconfiguration"
+
+  # Sensitive data in logs
+  - id: shipready-sensitive-data-in-logs
+    patterns:
+      - pattern-either:
+          - pattern: console.log(..., $SECRET, ...)
+          - pattern: console.info(..., $SECRET, ...)
+          - pattern: console.debug(..., $SECRET, ...)
+          - pattern: console.log(... + $SECRET + ...)
+          - pattern: console.log(`...${$SECRET}...`)
+          - pattern: logger.info(..., $SECRET, ...)
+          - pattern: logger.debug(..., $SECRET, ...)
+      metavariable-regex:
+        metavariable: $SECRET
+        regex: "(?i)(password|secret|token|key|auth|credential|ssn|credit|card)"
+    message: "Potential sensitive data in logs. Redact sensitive fields."
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-532: Information Exposure Through Log Files"
+      owasp: "A09:2021 - Security Logging and Monitoring Failures"
+
+  # Missing security headers
+  - id: shipready-missing-security-headers
+    patterns:
+      - pattern: export default function $NAME() { ... }
+      - pattern-not:
+          - pattern: headers: { ... 'X-Content-Type-Options': 'nosniff' ... }
+          - pattern: headers: { ... 'X-Frame-Options': 'DENY' ... }
+          - pattern: headers: { ... 'Content-Security-Policy': ... }
+    message: "Missing security headers. Add CSP, X-Frame-Options, etc."
+    languages: [typescript, javascript]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-693: Protection Mechanism Failure"
+      owasp: "A05:2021 - Security Misconfiguration"

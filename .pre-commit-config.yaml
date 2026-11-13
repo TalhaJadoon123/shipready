@@ -1,0 +1,22 @@
+repos:
+  - repo: https://github.com/pre-commit/pre-commit-hooks
+    rev: v5.0.0
+    hooks:
+      - id: trailing-whitespace
+      - id: end-of-file-fixer
+      - id: check-yaml
+      - id: check-json
+      - id: check-merge-conflict
+      - id: check-added-large-files
+        args: ['--maxkb=1000']
+      - id: detect-private-key
+      - id: detect-aws-credentials
+      - id: detect-private-key
+
+  - repo: https://github.com/semgrep/semgrep
+    rev: v1.180.0
+    hooks:
+      - id: semgrep
+        args: ['--config=auto', '--error', '--severity=ERROR', '--timeout=60']
+        additional_dependencies: []
+        stages: [pre-commit]

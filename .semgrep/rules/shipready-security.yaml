@@ -1,0 +1,174 @@
+rules:
+  # Hardcoded secrets detection
+  - id: shipready-hardcoded-secrets
+    patterns:
+      - pattern-either:
+          - pattern: $X = "..."
+          - pattern: $X = '...'
+          - pattern: const $X = "..."
+          - pattern: const $X = '...'
+          - pattern: let $X = "..."
+          - pattern: let $X = '...'
+      metavariable-regex:
+        metavariable: $X
+        regex: "(?i)(api[_-]?key|secret|password|token|private[_-]?key|auth[_-]?token|access[_-]?token|client[_-]?secret|db[_-]?password|database[_-]?url)"
+    message: "Hardcoded secret detected. Use environment variables instead."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-798: Use of Hard-coded Credentials"
+      owasp: "A07:2021 - Identification and Authentication Failures"
+
+  # SQL injection via string concatenation
+  - id: shipready-sql-injection
+    patterns:
+      - pattern-either:
+          - pattern: $X.query(`...${...}...`)
+          - pattern: $X.query("..." + ... + "...")
+          - pattern: $X.execute(`...${...}...`)
+          - pattern: $X.execute("..." + ... + "...")
+          - pattern: db.query(`...${...}...`)
+          - pattern: db.query("..." + ... + "...")
+          - pattern: prisma.$X.query(`...${...}...`)
+          - pattern: sequelize.query(`...${...}...`)
+    message: "Potential SQL injection via string concatenation. Use parameterized queries."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-89: SQL Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Command injection
+  - id: shipready-command-injection
+    patterns:
+      - pattern-either:
+          - pattern: child_process.exec(`...${...}...`)
+          - pattern: child_process.exec("..." + ... + "...")
+          - pattern: child_process.spawn(`...${...}...`)
+          - pattern: child_process.spawn("..." + ... + "...")
+          - pattern: exec(`...${...}...`)
+          - pattern: exec("..." + ... + "...")
+          - pattern: execSync(`...${...}...`)
+          - pattern: execSync("..." + ... + "...")
+          - pattern: spawn(`...${...}...`)
+          - pattern: spawn("..." + ... + "...")
+          - pattern: execa(`...${...}...`)
+          - pattern: execa("..." + ... + "...")
+    message: "Potential command injection. Use argument arrays instead of string concatenation."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-78: OS Command Injection"
+      owasp: "A03:2021 - Injection"
+
+  # Path traversal
+  - id: shipready-path-traversal
+    patterns:
+      - pattern-either:
+          - pattern: fs.readFile(`...${...}...`, ...)
+          - pattern: fs.readFileSync(`...${...}...`)
+          - pattern: fs.writeFile(`...${...}...`, ...)
+          - pattern: fs.writeFileSync(`...${...}...`, ...)
+          - pattern: path.join(`...${...}...`, ...)
+          - pattern: path.resolve(`...${...}...`, ...)
+          - pattern: open(`...${...}...`, ...)
+    message: "Potential path traversal. Validate and sanitize file paths."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-22: Path Traversal"
+      owasp: "A01:2021 - Broken Access Control"
+
+  # XSS via innerHTML
+  - id: shipready-xss-innerhtml
+    patterns:
+      - pattern-either:
+          - pattern: $X.innerHTML = `...${...}...`
+          - pattern: $X.innerHTML = "..." + ... + "..."
+          - pattern: element.innerHTML = `...${...}...`
+          - pattern: element.innerHTML = "..." + ... + "..."
+          - pattern: dangerouslySetInnerHTML = {{ __html: `...${...}...` }}
+          - pattern: dangerouslySetInnerHTML = {{ __html: "..." + ... + "..." }}
+    message: "Potential XSS via innerHTML. Sanitize user input before rendering."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-79: Cross-site Scripting"
+      owasp: "A03:2021 - Injection"
+
+  # Weak crypto
+  - id: shipready-weak-crypto
+    patterns:
+      - pattern-either:
+          - pattern: crypto.createHash("md5")
+          - pattern: crypto.createHash("sha1")
+          - pattern: crypto.createCipher("des", ...)
+          - pattern: crypto.createCipher("des3", ...)
+          - pattern: crypto.createCipher("rc4", ...)
+          - pattern: crypto.createCipher("aes-128-ecb", ...)
+    message: "Weak cryptographic algorithm. Use SHA-256 or stronger, AES-GCM for encryption."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-327: Use of a Broken or Risky Cryptographic Algorithm"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # Insecure random
+  - id: shipready-insecure-random
+    patterns:
+      - pattern: Math.random()
+      - pattern: new Date().getTime()
+    message: "Insecure random number generation for security purposes. Use crypto.randomBytes() or crypto.randomUUID()."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-338: Use of Cryptographically Weak Pseudo-Random Number Generator"
+      owasp: "A02:2021 - Cryptographic Failures"
+
+  # eval usage
+  - id: shipready-eval-usage
+    patterns:
+      - pattern-either:
+          - pattern: eval(...)
+          - pattern: new Function(...)
+          - pattern: setTimeout("...", ...)
+          - pattern: setInterval("...", ...)
+    message: "Use of eval or dynamic code execution. Avoid dynamic code execution."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-95: Improper Neutralization of Directives in Dynamically Evaluated Code"
+      owasp: "A03:2021 - Injection"
+
+  # console.log in production
+  - id: shipready-console-log
+    patterns:
+      - pattern-either:
+          - pattern: console.log(...)
+          - pattern: console.info(...)
+          - pattern: console.debug(...)
+      - pattern-not:
+          - pattern: if (process.env.NODE_ENV !== 'production') { ... console.log(...) ... }
+          - pattern: if (process.env.NODE_ENV === 'development') { ... console.log(...) ... }
+    message: "Console logging in production code. Use a proper logger instead."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: WARNING
+    metadata:
+      cwe: "CWE-532: Information Exposure Through Log Files"
+      owasp: "A09:2021 - Security Logging and Monitoring Failures"
+
+  # Insecure HTTP
+  - id: shipready-insecure-http
+    patterns:
+      - pattern-either:
+          - pattern: fetch("http://...")
+          - pattern: fetch("http://..." + ...)
+          - pattern: axios.get("http://...")
+          - pattern: axios.post("http://...")
+          - pattern: fetch("http://..." + ...)
+    message: "Insecure HTTP request. Use HTTPS instead."
+    languages: [typescript, javascript, tsx, jsx]
+    severity: ERROR
+    metadata:
+      cwe: "CWE-319: Cleartext Transmission of Sensitive Information"
+      owasp: "A02:2021 - Cryptographic Failures"
